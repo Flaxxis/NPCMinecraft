@@ -20,12 +20,14 @@ import org.jspecify.annotations.Nullable;
  */
 public final class HelperSupports {
     /** No higher than this: a helper builds a step, not a tower. */
-    public static final int MAX_STEPS = 6;
+    public static final int MAX_HEIGHT = 10;
     /** Dirt a trade carries for the purpose. */
-    public static final int CARRY = 10;
+    public static final int CARRY = 16;
 
     private final NpcHelperEntity helper;
     private final List<BlockPos> placed = new ArrayList<>();
+    /** Where the next block of the pillar goes; null until a climb starts. */
+    private @Nullable BlockPos next;
 
     public HelperSupports(final NpcHelperEntity helper) {
         this.helper = helper;
@@ -45,48 +47,40 @@ public final class HelperSupports {
     }
 
     /**
-     * Sets one block down to stand on next, on the side the work is. True when a step went in; false when there is no dirt,
-     * nowhere to put it, or the helper is high enough already.
+     * Raises the helper a block, the way anyone does it: a hop, and a block dropped into the space just left. The pillar
+     * goes straight up from where it started, so it never wanders off over the work. True while the climb is going on.
      */
     public boolean step(final ServerLevel level, final BlockPos target) {
-        if (placed.size() >= MAX_STEPS) return false;
+        if (placed.size() >= MAX_HEIGHT) return false;
 
+        // Room for the head and for the hop itself before anything is spent.
         BlockPos feet = helper.blockPosition();
-        Direction towards = Direction.getApproximateNearest(
-                target.getX() - feet.getX(), 0.0D, target.getZ() - feet.getZ());
-        // The step goes beside and level with the feet, so walking on to it is an ordinary stride up.
-        for (Direction side : List.of(towards, towards.getClockWise(), towards.getCounterClockWise(), towards.getOpposite())) {
-            BlockPos spot = feet.relative(side);
-            if (!level.getBlockState(spot).isAir() || !level.getBlockState(spot.above()).isAir()
-                    || !level.getBlockState(spot.above(2)).isAir()) continue;
-            List<BlockPos> column = new ArrayList<>();
-            BlockPos base = spot;
-            while (level.getBlockState(base).isAir() && column.size() < MAX_STEPS) {
-                column.add(base.immutable());
-                base = base.below();
-            }
-            if (!level.getBlockState(base).isSolid() || placed.size() + column.size() > MAX_STEPS) continue;
-            int soilCount = 0;
-            for (int index = 0; index < helper.getBag().getContainerSize(); index++) {
-                ItemStack stack = helper.getBag().getItem(index);
-                if (stack.is(ItemTags.DIRT)) soilCount += stack.getCount();
-            }
-            if (soilCount < column.size()) return false;
-            // Build the supporting column from the ground up, spending and remembering every block.
-            for (int index = column.size() - 1; index >= 0; index--) {
-                int slot = findSoil();
-                if (slot < 0) return false;
-                ItemStack soil = helper.getBag().getItem(slot);
-                if (!(soil.getItem() instanceof BlockItem block)) return false;
-                BlockPos pos = column.get(index);
-                if (!level.setBlockAndUpdate(pos, block.getBlock().defaultBlockState())) return false;
-                helper.getBag().removeItem(slot, 1);
-                placed.add(pos);
-            }
-            helper.getNavigation().moveTo(spot.getX() + 0.5D, spot.getY() + 1, spot.getZ() + 0.5D, 0, 1.0D);
+        if (next == null) next = feet.immutable();
+        if (!level.getBlockState(next.above()).isAir() || !level.getBlockState(next.above(2)).isAir()) return false;
+        if (findSoil() < 0) return false;
+
+        helper.getNavigation().stop();
+        helper.getLookControl().setLookAt(target.getX() + 0.5D, target.getY() + 0.5D, target.getZ() + 0.5D);
+
+        // On the ground under the next slot: hop, and fill the slot on the way up.
+        if (helper.onGround()) {
+            if (helper.blockPosition().getY() > next.getY()) next = helper.blockPosition().immutable();
+            helper.getJumpControl().jump();
             return true;
         }
-        return false;
+        // Clear of the slot now: a block goes in and the helper comes down on top of it.
+        if (helper.getY() < next.getY() + 0.6D) return true;
+        if (!level.getBlockState(next).isAir()) return true;
+
+        int slot = findSoil();
+        ItemStack soil = helper.getBag().getItem(slot);
+        if (!(soil.getItem() instanceof BlockItem block)) return false;
+        if (!level.setBlockAndUpdate(next, block.getBlock().defaultBlockState())) return true;
+
+        helper.getBag().removeItem(slot, 1);
+        placed.add(next);
+        next = next.above();
+        return true;
     }
 
     /** The topmost block it set that is still standing, to be broken on the way down. */
@@ -104,6 +98,7 @@ public final class HelperSupports {
     }
 
     public void clear() {
+        next = null;
         placed.clear();
     }
 

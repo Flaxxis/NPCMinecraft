@@ -11,6 +11,7 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -25,15 +26,17 @@ public final class HelperWorkGoal extends Goal {
     private static final int STORE_SIGN_RADIUS = 64;
     private static final double SPEED = 1.0D;
 
-    /** Felling a tree in order: the trunk, then the crown, then down off the steps, then a new sapling in. */
-    private enum Phase { FELL, CROWN, RECOVER, PLANT }
+    /** Felling a tree in order: the trunk, then down off its own steps, then a sapling in where it stood. */
+    private enum Phase { FELL, RECOVER, PLANT }
+
+    /** How far a sapling or stick on the ground is worth noticing while working. */
+    private static final int GLEAN_RADIUS = 8;
 
     private final NpcHelperEntity helper;
     private final HelperKeeper keeper;
     private @Nullable HelperStep activeStep;
     private @Nullable BlockPos site;
     private @Nullable List<BlockPos> trunk;
-    private @Nullable List<BlockPos> crown;
     private @Nullable BlockPos foot;
     private Phase phase = Phase.FELL;
     private @Nullable BlockPos soilExit;
@@ -133,7 +136,6 @@ public final class HelperWorkGoal extends Goal {
         keeper.reset();
         site = null;
         trunk = null;
-        crown = null;
         foot = null;
         phase = Phase.FELL;
         soilExit = null;
@@ -157,8 +159,6 @@ public final class HelperWorkGoal extends Goal {
         output.store("Foot", BlockPos.CODEC, foot);
         var logs = output.childrenList("Trunk");
         for (BlockPos pos : trunk) logs.addChild().store("Pos", BlockPos.CODEC, pos);
-        var leaves = output.childrenList("Crown");
-        if (crown != null) for (BlockPos pos : crown) leaves.addChild().store("Pos", BlockPos.CODEC, pos);
     }
 
     public void load(final net.minecraft.world.level.storage.ValueInput input) {
@@ -175,8 +175,6 @@ public final class HelperWorkGoal extends Goal {
         if (foot == null) return;
         trunk = new ArrayList<>();
         for (var child : input.childrenListOrEmpty("Trunk")) child.read("Pos", BlockPos.CODEC).ifPresent(trunk::add);
-        crown = new ArrayList<>();
-        for (var child : input.childrenListOrEmpty("Crown")) child.read("Pos", BlockPos.CODEC).ifPresent(crown::add);
         try { phase = Phase.valueOf(input.getStringOr("Phase", "FELL")); }
         catch (IllegalArgumentException ignored) { phase = Phase.FELL; }
         activeStep = step;
@@ -369,6 +367,10 @@ public final class HelperWorkGoal extends Goal {
 
     private void gatherWood(final ServerLevel level, final HelperStep step) {
         useTool(HelperToolkit.Tool.AXE);
+        // The crown is never cut: it withers once the trunk is gone. What it sheds on the way down is simply noticed.
+        if (helper.tickCount % 20 == 0) {
+            helper.pickup().claimLoose(level, helper.blockPosition(), GLEAN_RADIUS, HelperWorkGoal::shedByTree);
+        }
         step.reconcile(helper.carriedLogs());
         if (step.finished() && (trunk == null || step.type().equals(HelperStep.BOOTSTRAP_WOOD))) {
             helper.queue().advance();
@@ -391,7 +393,6 @@ public final class HelperWorkGoal extends Goal {
                 return;
             }
             trunk = HelperTree.trunk(level, first);
-            crown = HelperTree.crown(level, trunk);
             foot = HelperTree.foot(trunk);
             phase = Phase.FELL;
         }
@@ -405,12 +406,10 @@ public final class HelperWorkGoal extends Goal {
                     resetTask();
                 }
             }
-            case CROWN -> clearCrown(level);
             case RECOVER -> recoverSteps(level);
             case PLANT -> {
                 plantAtFoot(level);
                 trunk = null;
-                crown = null;
                 foot = null;
                 phase = Phase.FELL;
                 if (step.finished()) helper.queue().advance();
@@ -421,7 +420,7 @@ public final class HelperWorkGoal extends Goal {
     private void fellTrunk(final ServerLevel level, final HelperStep step) {
         BlockPos log = standing(level, trunk, BlockTags.LOGS);
         if (log == null) {
-            phase = Phase.CROWN;
+            phase = Phase.RECOVER;
             return;
         }
         // Too high to reach: a step of its own dirt goes down first.
@@ -433,7 +432,7 @@ public final class HelperWorkGoal extends Goal {
             }
             if (!helper.getNavigation().isDone() && !helper.getNavigation().isStuck()) return;
             if (helper.supports().step(level, log)) helper.queue().noteProgress();
-            else phase = Phase.CROWN;
+            else phase = Phase.RECOVER;
             return;
         }
         if (!helper.breaking().inReach(log)) {
@@ -446,15 +445,9 @@ public final class HelperWorkGoal extends Goal {
         helper.queue().noteProgress();
     }
 
-    /** The crown is taken down for its saplings; nothing is built to reach it. */
-    private void clearCrown(final ServerLevel level) {
-        BlockPos leaf = reachable(level, crown);
-        if (leaf == null) {
-            phase = Phase.RECOVER;
-            return;
-        }
-        helper.getNavigation().stop();
-        if (helper.breaking().tick(leaf)) helper.queue().noteProgress();
+    /** What a dying crown sheds, and nothing else: the helper is not scavenging the forest floor. */
+    private static boolean shedByTree(final ItemStack stack) {
+        return stack.is(ItemTags.SAPLINGS) || stack.is(Items.STICK) || stack.is(Items.APPLE);
     }
 
     /** Down off its own steps, taking the dirt back as it goes. */

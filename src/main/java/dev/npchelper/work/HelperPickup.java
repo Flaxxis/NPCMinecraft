@@ -194,6 +194,25 @@ public final class HelperPickup {
                 .intersects(item.getBoundingBox());
     }
 
+    /**
+     * Takes an interest in loose drops around a spot that nobody has claimed — what a felled tree sheds while its leaves
+     * decay on their own. Anything a player or another helper threw down has a thrower or a mark on it and is left alone.
+     */
+    public void claimLoose(final ServerLevel level, final BlockPos around, final int radius,
+                           final java.util.function.Predicate<ItemStack> wanted) {
+        var box = new net.minecraft.world.phys.AABB(around).inflate(radius, radius, radius);
+        for (ItemEntity item : level.getEntitiesOfClass(ItemEntity.class, box)) {
+            if (!item.isAlive() || pending.contains(item.getUUID())) continue;
+            if (item.getOwner() != null) continue;
+            if (item.getPersistentData().read(HARVESTER, UUIDUtil.CODEC).isPresent()) continue;
+            if (!wanted.test(item.getItem())) continue;
+
+            item.getPersistentData().store(HARVESTER, UUIDUtil.CODEC, helper.getUUID());
+            pending.add(item.getUUID());
+            born.putIfAbsent(item.getUUID(), level.getGameTime());
+        }
+    }
+
     /** Finds this helper's harvest again after vanilla merged it into another stack. */
     private void rediscover(final ServerLevel level) {
         for (ItemEntity item : level.getEntitiesOfClass(ItemEntity.class, helper.getBoundingBox().inflate(RESCAN_RADIUS))) {
