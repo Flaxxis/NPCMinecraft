@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:unreachable_warehouse_fallback",
+  "environment": "npchelper:supplies_isolated",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 100
+}

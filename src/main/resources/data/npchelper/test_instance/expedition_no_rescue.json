@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:expedition_no_rescue",
+  "environment": "npchelper:night_expedition_rescue",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 900
+}

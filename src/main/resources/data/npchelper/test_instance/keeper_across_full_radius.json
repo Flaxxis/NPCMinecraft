@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:keeper_across_full_radius",
+  "environment": "npchelper:keeper_wide",
+  "structure": "npchelper:regression_wide_arena",
+  "max_ticks": 3500
+}
