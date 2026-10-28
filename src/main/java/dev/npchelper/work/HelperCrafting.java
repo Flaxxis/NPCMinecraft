@@ -9,8 +9,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.crafting.CraftingInput;
-import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.level.block.Blocks;
 import org.jspecify.annotations.Nullable;
@@ -32,9 +30,8 @@ public final class HelperCrafting {
     /** One craft of the item into the bag. */
     public static Outcome craft(final ServerLevel level, final Container bag, final Item wanted, final boolean benchNearby) {
         for (var holder : level.getServer().getRecipeManager().getRecipes()) {
-            if (!(holder.value() instanceof CraftingRecipe recipe) || recipe.isSpecial()) continue;
-
-            ItemStack result = recipe.assemble(CraftingInput.EMPTY);
+            var recipe = holder.value();
+            ItemStack result = HelperRecipes.resultOf(recipe);
             if (result.isEmpty() || !result.is(wanted)) continue;
 
             var placement = recipe.placementInfo();
@@ -62,8 +59,8 @@ public final class HelperCrafting {
     /** True when the bag holds everything some recipe for this item needs. */
     public static boolean canCraft(final ServerLevel level, final Container bag, final Item wanted) {
         for (var holder : level.getServer().getRecipeManager().getRecipes()) {
-            if (!(holder.value() instanceof CraftingRecipe recipe) || recipe.isSpecial()) continue;
-            ItemStack result = recipe.assemble(CraftingInput.EMPTY);
+            var recipe = holder.value();
+            ItemStack result = HelperRecipes.resultOf(recipe);
             if (result.isEmpty() || !result.is(wanted)) continue;
 
             var placement = recipe.placementInfo();

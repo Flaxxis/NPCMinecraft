@@ -13,7 +13,6 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.Recipe;
 import org.jspecify.annotations.Nullable;
@@ -108,9 +107,7 @@ public final class HelperObtain {
         String before = why;
         for (var holder : level.getServer().getRecipeManager().getRecipes()) {
             Recipe<?> recipe = holder.value();
-            if (recipe.isSpecial() || !(recipe instanceof net.minecraft.world.item.crafting.CraftingRecipe crafting)) continue;
-
-            ItemStack result = crafting.assemble(CraftingInput.EMPTY);
+            ItemStack result = HelperRecipes.resultOf(recipe);
             if (result.isEmpty() || !result.is(item)) continue;
 
             var placement = recipe.placementInfo();
