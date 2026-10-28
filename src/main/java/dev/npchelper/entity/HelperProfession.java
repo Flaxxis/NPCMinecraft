@@ -19,6 +19,14 @@ public enum HelperProfession {
         return name().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Whether the trade actually does its work yet. The others are names held in reserve — kept here so saved helpers and
+     * their data keep their place — and are offered to the player only once they are built.
+     */
+    public boolean available() {
+        return this == NONE || this == LUMBERJACK || this == KEEPER;
+    }
+
     /** The profession for a saved id; NONE for anything unknown, so an old or edited save still loads. */
     public static HelperProfession byId(String id) {
         for (HelperProfession profession : values()) {

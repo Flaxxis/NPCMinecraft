@@ -1,7 +1,7 @@
 {
   "type": "minecraft:function",
   "function": "npchelper:marked_storage",
-  "environment": "minecraft:default",
+  "environment": "npchelper:day",
   "structure": "npchelper:regression_arena",
   "max_ticks": 100
 }

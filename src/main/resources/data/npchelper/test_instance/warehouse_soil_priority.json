@@ -1,7 +1,7 @@
 {
   "type": "minecraft:function",
   "function": "npchelper:warehouse_soil_priority",
-  "environment": "minecraft:default",
+  "environment": "npchelper:day",
   "structure": "npchelper:regression_arena",
   "max_ticks": 800
 }

@@ -32,6 +32,8 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private Button roamButton, stayButton, followButton, movementTab, professionTab, actionsTab, previousPage, nextPage;
     private final java.util.List<Button> radiusButtons = new java.util.ArrayList<>();
     private final java.util.List<Button> professionButtons = new java.util.ArrayList<>();
+    /** The trade behind each button, in the same order: the buttons are no longer one per trade. */
+    private final java.util.List<HelperProfession> shownProfessions = new java.util.ArrayList<>();
     private enum Tab { MOVEMENT, PROFESSIONS, ACTIONS }
     private Tab selectedTab = Tab.MOVEMENT;
     private static final int PAGE_SIZE = 6;
@@ -82,8 +84,12 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
                     b -> press(HelperMenu.BUTTON_RADIUS + choice))
                     .bounds(leftPos + HelperMenu.LEFT + 80 + index * 40, topPos + RANGE_Y, 36, 20).build()));
         }
+        // Only the trades that work are offered; each button still sends its trade's own number.
+        shownProfessions.clear();
         for (HelperProfession profession : HelperProfession.values()) {
-            int index = profession.ordinal();
+            if (!profession.available()) continue;
+            int index = shownProfessions.size();
+            shownProfessions.add(profession);
             professionButtons.add(addRenderableWidget(Button.builder(Component.literal(trade(profession)),
                     b -> press(HelperMenu.BUTTON_PROFESSION + profession.ordinal()))
                     .bounds(leftPos + HelperMenu.LEFT + index % 4 * 70, topPos + MODES_Y + index / 4 * 24, 66, 20).build()));
@@ -269,7 +275,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
             radiusButtons.get(index).active = helper.getRoamRadius() != NpcHelperEntity.ROAM_RADII[index];
         }
         for (int index = 0; index < professionButtons.size(); index++) {
-            professionButtons.get(index).active = helper.getProfession().ordinal() != index;
+            professionButtons.get(index).active = helper.getProfession() != shownProfessions.get(index);
         }
     }
 

@@ -45,6 +45,7 @@ public final class HelperRegressionTests {
         tests.register("tall_tree_steps", () -> HelperRegressionTests::tallTreeSteps);
         tests.register("second_tall_tree", () -> HelperRegressionTests::secondTallTree);
         tests.register("keeper_sweeps_ground", () -> HelperRegressionTests::keeperSweepsGround);
+        tests.register("warehouse_any_free_slot", () -> HelperRegressionTests::warehouseAnyFreeSlot);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
         tests.register("pickup_full_bag", () -> HelperRegressionTests::pickupFullBag);
@@ -447,7 +448,11 @@ public final class HelperRegressionTests {
         helper.setNoAi(false);
         h.runAfterDelay(8, () -> {
             h.assertTrue(helper.breaking().target() != null, "Test did not reach active chopping");
-            h.assertTrue(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.GUARD.ordinal()), "Profession button was rejected");
+            h.assertFalse(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.GUARD.ordinal()),
+                    "A trade that is not built yet was accepted");
+            h.assertTrue(helper.getProfession() == HelperProfession.NONE && helper.breaking().target() != null,
+                    "A refused trade still disturbed the running work");
+            h.assertTrue(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.KEEPER.ordinal()), "Profession button was rejected");
             h.assertTrue(helper.queue().current().type().equals(HelperStep.PREPARE_KIT) && helper.breaking().target() == null, "Switching profession retained chopping");
             var saved = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, h.getLevel().registryAccess());
             helper.saveWithoutId(saved);
@@ -981,6 +986,33 @@ public final class HelperRegressionTests {
                     && helper.getBag().countItem(Items.COBBLESTONE) == 0, "Kit was stored, or loot was kept back");
             helper.discard();
             other.discard();
+        });
+    }
+
+    /**
+     * A warehouse of one chest already holding something else still takes a new kind of thing while it has room: there is
+     * no separate chest for it and no empty one, so the last resort is any free slot (game 28.10: the keeper stood holding
+     * things the warehouse would not take).
+     */
+    private static void warehouseAnyFreeSlot(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var target = HelperContainers.containerAt(h.getLevel(), store);
+        for (int slot = 0; slot < 5; slot++) target.setItem(slot, new ItemStack(Items.COBBLESTONE, 64));
+
+        var level = h.getLevel();
+        var at = h.absoluteVec(net.minecraft.world.phys.Vec3.atBottomCenterOf(new BlockPos(24, 1, 18)));
+        level.addFreshEntity(new net.minecraft.world.entity.item.ItemEntity(level, at.x, at.y, at.z, new ItemStack(Items.APPLE, 3)));
+
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(target.countItem(Items.APPLE) == 3, "A new kind was not put into the one warehouse chest with room: " + state(h, helper));
+            h.assertTrue(target.countItem(Items.COBBLESTONE) == 5 * 64, "What was already stored was disturbed");
+            h.assertTrue(helper.getBag().countItem(Items.APPLE) == 0, "Kept the loot in the bag although there was room");
+            helper.discard();
         });
     }
 

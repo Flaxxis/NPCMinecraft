@@ -1,7 +1,7 @@
 {
   "type": "minecraft:function",
   "function": "npchelper:warehouse_crafting_materials",
-  "environment": "minecraft:default",
+  "environment": "npchelper:day",
   "structure": "npchelper:regression_arena",
   "max_ticks": 1200
 }

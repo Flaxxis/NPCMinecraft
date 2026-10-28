@@ -165,6 +165,11 @@ public final class HelperKeeper {
         return result;
     }
 
+    /**
+     * Where a thing is best put, lowest first: topping up a part stack of the same → a chest that already holds it → an
+     * empty chest → and, failing all those, any warehouse chest with a free slot, so a warehouse never shuts for want of a
+     * tidy place while there is still room in it.
+     */
     private int rank(final Container container, final ItemStack stack) {
         if (HelperContainers.matchingRoom(container, stack) > 0) return 0;
         if (HelperContainers.contains(container, stack)) return 1;
@@ -173,7 +178,8 @@ public final class HelperKeeper {
 
     private @Nullable BlockPos destination(final ServerLevel level, final List<BlockPos> stores, final ItemStack stack) {
         BlockPos best = null;
-        int score = 3;
+        // Every rank is acceptable; the order only says which is preferred.
+        int score = 4;
         for (BlockPos pos : stores) {
             Container container = HelperContainers.containerAt(level, pos);
             if (container == null || HelperContainers.room(container, stack) <= 0 || !reachable(level, pos)) continue;

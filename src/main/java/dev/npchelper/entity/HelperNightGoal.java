@@ -28,9 +28,15 @@ public final class HelperNightGoal extends Goal {
         setFlags(EnumSet.of(Flag.MOVE));
     }
 
+    /**
+     * Time to head home. Not when it is already dark (13000), nor at sunset (12000), but in the late afternoon, so the walk
+     * home — up to sixty four blocks — is made in daylight and the helper is indoors before the first monster appears.
+     */
+    private static final long HEAD_HOME = 11500L, DAYBREAK = 23000L;
+
     public static boolean night(final NpcHelperEntity helper) {
         long time = Math.floorMod(helper.level().getOverworldClockTime(), 24000L);
-        return helper.level().dimensionType().hasSkyLight() && time >= 13000 && time < 23000;
+        return helper.level().dimensionType().hasSkyLight() && time >= HEAD_HOME && time < DAYBREAK;
     }
 
     public boolean wanted() { return !helper.isExpedition() && night(helper); }

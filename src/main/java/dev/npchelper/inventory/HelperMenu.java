@@ -163,7 +163,10 @@ public final class HelperMenu extends AbstractContainerMenu {
         }
         int profession = buttonId - BUTTON_PROFESSION;
         if (profession >= 0 && profession < HelperProfession.values().length) {
-            helper.setProfession(HelperProfession.values()[profession]);
+            // A trade that is not built yet is refused here too, not only left off the screen.
+            HelperProfession chosen = HelperProfession.values()[profession];
+            if (!chosen.available()) return false;
+            helper.setProfession(chosen);
             return true;
         }
         switch (buttonId) {
