@@ -1,6 +1,7 @@
 package dev.npchelper.client;
 
 import dev.npchelper.entity.HelperMode;
+import dev.npchelper.entity.HelperProfession;
 import dev.npchelper.entity.NpcHelperEntity;
 import dev.npchelper.inventory.HelperMenu;
 import dev.npchelper.net.HelperNetwork;
@@ -25,7 +26,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private static final int ACTIVE = 0xFF7BE87B;
 
     private EditBox nameBox;
-    private Button roamButton, stayButton, followButton, radiusButton;
+    private Button roamButton, stayButton, followButton, radiusButton, professionButton;
 
     public HelperScreen(final HelperMenu menu, final Inventory inventory, final Component title) {
         super(menu, inventory, title, WIDTH, HEIGHT);
@@ -55,6 +56,8 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
                 .bounds(leftPos + HelperMenu.LEFT + 186, buttonsY, 90, 20).build());
         radiusButton = addRenderableWidget(Button.builder(radiusLabel(), b -> press(HelperMenu.BUTTON_RADIUS))
                 .bounds(leftPos + HelperMenu.LEFT + 150, topPos + HelperMenu.EQUIPMENT_Y - 22, 126, 18).build());
+        professionButton = addRenderableWidget(Button.builder(professionLabel(), b -> press(HelperMenu.BUTTON_PROFESSION))
+                .bounds(leftPos + HelperMenu.LEFT, buttonsY + 22, 276, 20).build());
     }
 
     private void press(final int buttonId) {
@@ -73,6 +76,24 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private Component radiusLabel() {
         NpcHelperEntity helper = menu.helper();
         return Component.literal("Радіус: " + (helper == null ? 0 : helper.getRoamRadius()) + " блоків");
+    }
+
+    private Component professionLabel() {
+        NpcHelperEntity helper = menu.helper();
+        return Component.literal("Ремесло: " + trade(helper == null ? HelperProfession.NONE : helper.getProfession()));
+    }
+
+    private static String trade(final HelperProfession profession) {
+        return switch (profession) {
+            case NONE -> "без діла";
+            case GUARD -> "сторож";
+            case LUMBERJACK -> "лісоруб";
+            case MINER -> "шахтар";
+            case SMELTER -> "плавильник";
+            case HUNTER -> "мисливець";
+            case BUILDER -> "будівельник";
+            case KEEPER -> "комірник";
+        };
     }
 
     @Override
@@ -104,6 +125,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     public void containerTick() {
         super.containerTick();
         radiusButton.setMessage(radiusLabel());
+        professionButton.setMessage(professionLabel());
         NpcHelperEntity helper = menu.helper();
         if (helper == null) return;
         roamButton.active = helper.getMode() != HelperMode.ROAM;

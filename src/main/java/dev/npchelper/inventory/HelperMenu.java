@@ -19,7 +19,7 @@ import org.jspecify.annotations.Nullable;
  * channel of its own for them.
  */
 public final class HelperMenu extends AbstractContainerMenu {
-    public static final int BUTTON_ROAM = 0, BUTTON_STAY = 1, BUTTON_FOLLOW = 2, BUTTON_RADIUS = 3;
+    public static final int BUTTON_ROAM = 0, BUTTON_STAY = 1, BUTTON_FOLLOW = 2, BUTTON_RADIUS = 3, BUTTON_PROFESSION = 4;
 
     public static final int EQUIPMENT_COUNT = HelperEquipmentContainer.SLOTS.length;
     public static final int BAG_SIZE = NpcHelperEntity.BAG_SIZE;
@@ -87,6 +87,7 @@ public final class HelperMenu extends AbstractContainerMenu {
             case BUTTON_STAY -> helper.setMode(HelperMode.STAY);
             case BUTTON_FOLLOW -> helper.setMode(HelperMode.FOLLOW);
             case BUTTON_RADIUS -> helper.cycleRoamRadius();
+            case BUTTON_PROFESSION -> helper.cycleProfession();
             default -> {
                 return false;
             }

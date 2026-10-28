@@ -70,6 +70,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
     private final dev.npchelper.work.HelperPickup pickup = new dev.npchelper.work.HelperPickup(this);
     private final dev.npchelper.work.HelperBreaking breaking = new dev.npchelper.work.HelperBreaking(this, pickup);
+    private final dev.npchelper.work.HelperQueue queue = new dev.npchelper.work.HelperQueue();
     /** The spot the helper keeps to in every mode but FOLLOW. */
     private BlockPos anchor = BlockPos.ZERO;
     /** While this has not run out, the helper keeps to the owner whatever its mode says. */
@@ -118,7 +119,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
         goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.1D, true));
-        goalSelector.addGoal(4, new dev.npchelper.work.HelperPickupGoal(this));
+        goalSelector.addGoal(3, new dev.npchelper.work.HelperPickupGoal(this));
+        goalSelector.addGoal(4, new dev.npchelper.work.HelperWorkGoal(this));
         goalSelector.addGoal(5, new HelperWanderGoal(this));
         goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
         goalSelector.addGoal(7, new RandomLookAroundGoal(this));
@@ -198,6 +200,19 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return breaking;
     }
 
+    public dev.npchelper.work.HelperQueue queue() {
+        return queue;
+    }
+
+    /** How far from its centre the helper is willing to work: its own circle, and a short one while it stays put. */
+    public int workRadius() {
+        return switch (getMode()) {
+            case STAY -> HelperMode.STAY_RADIUS;
+            case FOLLOW -> HelperMode.FOLLOW_MAX;
+            case ROAM -> getRoamRadius();
+        };
+    }
+
     /** Gear handed over by the player is never lost silently: it drops in full when the helper dies. */
     public void equipFromPlayer(final EquipmentSlot slot, final ItemStack stack) {
         setItemSlot(slot, stack);
@@ -227,6 +242,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_MODE, mode.id());
         anchor = blockPosition();
         getNavigation().stop();
+        breaking.reset();
     }
 
     public BlockPos getAnchor() {
@@ -249,6 +265,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_ROAM_RADIUS, ROAM_RADII[0]);
     }
 
+    /** Steps to the next trade, round to «без діла» after the last. */
+    public void cycleProfession() {
+        HelperProfession[] all = HelperProfession.values();
+        setProfession(all[(getProfession().ordinal() + 1) % all.length]);
+    }
+
     /** An empty name clears the custom one and goes back to «Помічник». */
     public void rename(final String name) {
         String trimmed = name.strip();
@@ -265,8 +287,14 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return HelperProfession.byId(entityData.get(DATA_PROFESSION));
     }
 
+    /** Taking up a trade drops whatever was being done and starts that trade's own work. */
     public void setProfession(final HelperProfession profession) {
         entityData.set(DATA_PROFESSION, profession.id());
+        queue().clear();
+        breaking.reset();
+        if (profession == HelperProfession.LUMBERJACK) {
+            queue().set(java.util.List.of(new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.GATHER_WOOD, "", 16)));
+        }
     }
 
     /** A helper is somebody's, so it stays when the player walks away. */
@@ -293,6 +321,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         output.putInt("AnchorY", anchor.getY());
         output.putInt("AnchorZ", anchor.getZ());
         ContainerHelper.saveAllItems(output.child("Bag"), bag.getItems());
+        queue.store(output.child("Work"));
     }
 
     @Override
@@ -305,5 +334,6 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         anchor = new BlockPos(input.getIntOr("AnchorX", 0), input.getIntOr("AnchorY", 0), input.getIntOr("AnchorZ", 0));
         if (anchor.equals(BlockPos.ZERO)) anchor = blockPosition();
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());
+        queue.load(input.childOrEmpty("Work"));
     }
 }
