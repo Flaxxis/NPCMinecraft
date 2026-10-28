@@ -6,6 +6,7 @@ import dev.npchelper.entity.NpcHelperEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -13,10 +14,19 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import org.jspecify.annotations.Nullable;
 
-/** The helper's bag, plus the mode buttons. Buttons travel on the vanilla menu-button packet, so the mod needs none of its own. */
+/**
+ * The helper's gear and bag, plus the mode buttons. Buttons travel on the vanilla menu-button packet, so the mod needs no
+ * channel of its own for them.
+ */
 public final class HelperMenu extends AbstractContainerMenu {
     public static final int BUTTON_ROAM = 0, BUTTON_STAY = 1, BUTTON_FOLLOW = 2, BUTTON_RADIUS = 3;
-    private static final int BAG_SIZE = NpcHelperEntity.BAG_SIZE;
+
+    public static final int EQUIPMENT_COUNT = HelperEquipmentContainer.SLOTS.length;
+    public static final int BAG_SIZE = NpcHelperEntity.BAG_SIZE;
+    private static final int HELPER_SLOTS = EQUIPMENT_COUNT + BAG_SIZE;
+
+    /** Laid out by the screen, which draws a frame around each one. */
+    public static final int LEFT = 12, EQUIPMENT_Y = 88, BAG_Y = 116, PLAYER_Y = 180, HOTBAR_Y = 238;
 
     private final @Nullable NpcHelperEntity helper;
     private final Container bag;
@@ -31,15 +41,38 @@ public final class HelperMenu extends AbstractContainerMenu {
         super(NpcHelperMod.HELPER_MENU.get(), containerId);
         this.helper = helper;
         this.bag = helper == null ? new SimpleContainer(BAG_SIZE) : helper.getBag();
+        Container equipment = helper == null ? new SimpleContainer(EQUIPMENT_COUNT) : new HelperEquipmentContainer(helper);
         bag.startOpen(inventory.player);
 
-        for (int column = 0; column < BAG_SIZE; column++) addSlot(new Slot(bag, column, 8 + column * 18, 36));
+        for (int index = 0; index < EQUIPMENT_COUNT; index++) {
+            final EquipmentSlot type = HelperEquipmentContainer.SLOTS[index];
+            // Armour on the left, the two hands set apart on the right.
+            int x = index < 4 ? LEFT + index * 18 : LEFT + 108 + (index - 4) * 36;
+            addSlot(new Slot(equipment, index, x, EQUIPMENT_Y) {
+                @Override
+                public int getMaxStackSize() {
+                    return type.getType() == EquipmentSlot.Type.HUMANOID_ARMOR ? 1 : 64;
+                }
+
+                @Override
+                public boolean mayPlace(final ItemStack stack) {
+                    return type.getType() != EquipmentSlot.Type.HUMANOID_ARMOR
+                            || helper == null || stack.canEquip(type, helper);
+                }
+            });
+        }
+
         for (int row = 0; row < 3; row++) {
             for (int column = 0; column < 9; column++) {
-                addSlot(new Slot(inventory, column + row * 9 + 9, 8 + column * 18, 84 + row * 18));
+                addSlot(new Slot(bag, column + row * 9, LEFT + column * 18, BAG_Y + row * 18));
             }
         }
-        for (int column = 0; column < 9; column++) addSlot(new Slot(inventory, column, 8 + column * 18, 142));
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 9; column++) {
+                addSlot(new Slot(inventory, 9 + column + row * 9, LEFT + column * 18, PLAYER_Y + row * 18));
+            }
+        }
+        for (int column = 0; column < 9; column++) addSlot(new Slot(inventory, column, LEFT + column * 18, HOTBAR_Y));
     }
 
     public @Nullable NpcHelperEntity helper() {
@@ -68,10 +101,15 @@ public final class HelperMenu extends AbstractContainerMenu {
 
         ItemStack stack = slot.getItem();
         ItemStack original = stack.copy();
-        boolean fromBag = slotIndex < BAG_SIZE;
-        if (fromBag ? !moveItemStackTo(stack, BAG_SIZE, slots.size(), true)
-                : !moveItemStackTo(stack, 0, BAG_SIZE, false)) {
-            return ItemStack.EMPTY;
+        boolean fromHelper = slotIndex < HELPER_SLOTS;
+        if (fromHelper) {
+            if (!moveItemStackTo(stack, HELPER_SLOTS, slots.size(), true)) return ItemStack.EMPTY;
+        } else {
+            // Armour and weapons find their own slot first, everything else goes to the bag.
+            if (!moveItemStackTo(stack, 0, EQUIPMENT_COUNT, false)
+                    && !moveItemStackTo(stack, EQUIPMENT_COUNT, HELPER_SLOTS, false)) {
+                return ItemStack.EMPTY;
+            }
         }
 
         if (stack.isEmpty()) slot.setByPlayer(ItemStack.EMPTY);

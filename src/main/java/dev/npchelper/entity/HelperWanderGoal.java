@@ -1,6 +1,7 @@
 package dev.npchelper.entity;
 
-import net.minecraft.world.entity.LivingEntity;
+import java.util.EnumSet;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.phys.Vec3;
 
@@ -11,7 +12,7 @@ import net.minecraft.world.phys.Vec3;
 public final class HelperWanderGoal extends Goal {
     /** Ticks between picking the next spot once standing still. */
     private static final int PAUSE_MIN = 20, PAUSE_MAX = 90;
-    /** Further than this from the owner in FOLLOW and walking will not catch up any more. */
+    /** Further than this from the owner and walking will not catch up any more. */
     private static final double TELEPORT_DISTANCE = 32.0D;
     private static final double SPEED = 0.9D;
 
@@ -20,7 +21,7 @@ public final class HelperWanderGoal extends Goal {
 
     public HelperWanderGoal(final NpcHelperEntity helper) {
         this.helper = helper;
-        setFlags(java.util.EnumSet.of(Goal.Flag.MOVE));
+        setFlags(EnumSet.of(Goal.Flag.MOVE));
     }
 
     @Override
@@ -35,12 +36,11 @@ public final class HelperWanderGoal extends Goal {
 
     @Override
     public void tick() {
-        Vec3 centre = centre();
+        Vec3 centre = helper.centre();
         if (centre == null) return;
 
-        if (helper.getMode() == HelperMode.FOLLOW && helper.position().distanceTo(centre) > TELEPORT_DISTANCE) {
-            helper.getNavigation().stop();
-            helper.teleportTo(centre.x, centre.y, centre.z);
+        if (followsOwner() && helper.position().distanceTo(centre) > TELEPORT_DISTANCE) {
+            teleportNear(centre);
             return;
         }
 
@@ -48,15 +48,13 @@ public final class HelperWanderGoal extends Goal {
         if (cooldown-- > 0) return;
         cooldown = PAUSE_MIN + helper.getRandom().nextInt(PAUSE_MAX - PAUSE_MIN);
 
-        // Already where it should be: no need to shuffle every time.
+        // Already where it should be: no need to shuffle on every pause.
         double radius = radius();
-        if (helper.getMode() != HelperMode.FOLLOW && helper.position().distanceTo(centre) <= radius) {
-            if (helper.getRandom().nextInt(3) != 0) return;
-        }
+        if (!followsOwner() && helper.position().distanceTo(centre) <= radius && helper.getRandom().nextInt(3) != 0) return;
 
         for (int attempt = 0; attempt < 10; attempt++) {
             double angle = helper.getRandom().nextDouble() * Math.PI * 2.0D;
-            double distance = helper.getMode() == HelperMode.FOLLOW
+            double distance = followsOwner()
                     ? HelperMode.FOLLOW_MIN + helper.getRandom().nextDouble() * (HelperMode.FOLLOW_MAX - HelperMode.FOLLOW_MIN)
                     : helper.getRandom().nextDouble() * radius;
             double x = centre.x + Math.cos(angle) * distance;
@@ -65,18 +63,37 @@ public final class HelperWanderGoal extends Goal {
         }
     }
 
-    /** The owner in FOLLOW, the remembered spot otherwise; null when FOLLOW has nobody to follow. */
-    private Vec3 centre() {
-        if (helper.getMode() != HelperMode.FOLLOW) return Vec3.atBottomCenterOf(helper.getAnchor());
-        LivingEntity owner = helper.getOwner();
-        return owner == null || owner.level() != helper.level() ? null : owner.position();
+    private boolean followsOwner() {
+        return helper.getMode() == HelperMode.FOLLOW || helper.isRetreating();
     }
 
     private double radius() {
-        return switch (helper.getMode()) {
-            case STAY -> HelperMode.STAY_RADIUS;
-            case FOLLOW -> HelperMode.FOLLOW_MAX;
-            case ROAM -> helper.getRoamRadius();
-        };
+        if (followsOwner()) return HelperMode.FOLLOW_MAX;
+        return helper.getMode() == HelperMode.STAY ? HelperMode.STAY_RADIUS : helper.getRoamRadius();
+    }
+
+    /** Standing room only: never inside a block and never on top of something that hurts. */
+    private void teleportNear(final Vec3 centre) {
+        helper.getNavigation().stop();
+        BlockPos around = BlockPos.containing(centre);
+        for (int attempt = 0; attempt < 16; attempt++) {
+            BlockPos spot = around.offset(
+                    helper.getRandom().nextInt(7) - 3,
+                    helper.getRandom().nextInt(3) - 1,
+                    helper.getRandom().nextInt(7) - 3);
+            if (standable(spot)) {
+                helper.teleportTo(spot.getX() + 0.5D, spot.getY(), spot.getZ() + 0.5D);
+                return;
+            }
+        }
+    }
+
+    private boolean standable(final BlockPos spot) {
+        var level = helper.level();
+        var ground = level.getBlockState(spot.below());
+        return ground.isSolid()
+                && ground.getFluidState().isEmpty()
+                && level.getBlockState(spot).isAir()
+                && level.getBlockState(spot.above()).isAir();
     }
 }
