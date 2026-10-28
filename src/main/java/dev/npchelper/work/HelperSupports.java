@@ -19,10 +19,10 @@ import org.jspecify.annotations.Nullable;
  * afterwards. Every block it sets is remembered, so nothing of its own is left standing in the world.
  */
 public final class HelperSupports {
-    /** No higher than this: a helper builds a step, not a tower. */
+    /** No higher than this: a helper builds a pillar to reach its work, not a tower. */
     public static final int MAX_HEIGHT = 10;
-    /** Dirt a trade carries for the purpose. */
-    public static final int CARRY = 16;
+    /** Dirt a trade carries: one full pillar, and every block of it comes back, so no more is ever needed. */
+    public static final int CARRY = MAX_HEIGHT;
 
     private final NpcHelperEntity helper;
     private final List<BlockPos> placed = new ArrayList<>();
@@ -57,25 +57,27 @@ public final class HelperSupports {
      */
     public boolean step(final ServerLevel level, final BlockPos target) {
         if (placed.size() >= MAX_HEIGHT) return false;
-
-        // Room for the head and for the hop itself before anything is spent.
-        BlockPos feet = helper.blockPosition();
-        if (next == null) next = feet.immutable();
-        if (!level.getBlockState(next.above()).isAir() || !level.getBlockState(next.above(2)).isAir()) return false;
         if (findSoil() < 0) return false;
 
         helper.getNavigation().stop();
         helper.getLookControl().setLookAt(target.getX() + 0.5D, target.getY() + 0.5D, target.getZ() + 0.5D);
 
-        // On the ground under the next slot: hop, and fill the slot on the way up.
+        // Standing — on the ground or on top of its own pillar — the next block goes exactly where the feet are now.
+        // It is decided afresh on every landing, never carried over from an earlier climb somewhere else.
         if (helper.onGround()) {
-            if (helper.blockPosition().getY() > next.getY()) next = helper.blockPosition().immutable();
+            BlockPos feet = helper.blockPosition();
+            // Room for the head and for the hop itself before anything is spent.
+            if (!passable(level, feet.above()) || !passable(level, feet.above(2))) return false;
+            next = feet.immutable();
             helper.getJumpControl().jump();
             return true;
         }
+        // In the air without a climb begun: wait to come down.
+        if (next == null) return true;
         // Clear of the slot now: a block goes in and the helper comes down on top of it.
         if (helper.getY() < next.getY() + 0.6D) return true;
-        if (!level.getBlockState(next).isAir()) return true;
+        // Grass, flowers or snow where the feet were give way to the block, as they would for a player.
+        if (!level.getBlockState(next).canBeReplaced()) return true;
 
         int slot = findSoil();
         ItemStack soil = helper.getBag().getItem(slot);
@@ -83,9 +85,14 @@ public final class HelperSupports {
         if (!level.setBlockAndUpdate(next, block.getBlock().defaultBlockState())) return true;
 
         helper.getBag().removeItem(slot, 1);
-        placed.add(next);
-        next = next.above();
+        placed.add(next.immutable());
+        next = null;
         return true;
+    }
+
+    /** Nothing to bump the head on: air, or something the body passes through. */
+    private static boolean passable(final ServerLevel level, final BlockPos pos) {
+        return level.getBlockState(pos).getCollisionShape(level, pos).isEmpty();
     }
 
     /** The topmost block it set that is still standing, to be broken on the way down. */

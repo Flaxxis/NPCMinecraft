@@ -43,6 +43,7 @@ public final class HelperRegressionTests {
         tests.register("sign_from_materials", () -> HelperRegressionTests::signFromMaterials);
         tests.register("soil_under_grass", () -> HelperRegressionTests::soilUnderGrass);
         tests.register("tall_tree_steps", () -> HelperRegressionTests::tallTreeSteps);
+        tests.register("second_tall_tree", () -> HelperRegressionTests::secondTallTree);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
         tests.register("pickup_full_bag", () -> HelperRegressionTests::pickupFullBag);
@@ -368,6 +369,31 @@ public final class HelperRegressionTests {
             h.assertTrue(!helper.supports().any(), "Own steps were not recovered");
             h.assertTrue(helper.getBag().countItem(Items.OAK_LOG) == 9, "Tall tree harvest was not physically collected");
             h.assertTrue(helper.getBag().countItem(Items.DIRT) == HelperSupports.CARRY, "Own soil was lost during the climb");
+            helper.discard();
+        });
+    }
+
+    /**
+     * Two tall trunks, one after the other: the second climb must start from where the helper stands, not from the top of
+     * the first pillar it already took down (game 28.10: it hopped on the spot under the second tree and never rose).
+     */
+    private static void secondTallTree(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.getBag().addItem(new ItemStack(Items.IRON_AXE));
+        helper.getBag().addItem(new ItemStack(Items.DIRT, HelperSupports.CARRY));
+        for (int y = 1; y <= 8; y++) {
+            h.setBlock(new BlockPos(23, y, 20), Blocks.OAK_LOG);
+            h.setBlock(new BlockPos(17, y, 20), Blocks.OAK_LOG);
+        }
+        helper.queue().set(List.of(new HelperStep(HelperStep.GATHER_WOOD, "", 64)));
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(h.getLevel().getBlockState(h.absolutePos(new BlockPos(23, 8, 20))).isAir()
+                    && h.getLevel().getBlockState(h.absolutePos(new BlockPos(17, 8, 20))).isAir(),
+                    "Did not climb to the top of both trunks: " + state(h, helper));
+            h.assertTrue(!helper.supports().any(), "Own pillar was not taken down");
+            h.assertTrue(helper.getBag().countItem(Items.OAK_LOG) == 16, "Both trunks were not physically collected");
+            h.assertTrue(helper.getBag().countItem(Items.DIRT) == HelperSupports.CARRY, "Own soil was lost between the climbs");
             helper.discard();
         });
     }
