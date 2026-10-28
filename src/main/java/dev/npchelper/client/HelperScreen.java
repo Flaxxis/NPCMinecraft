@@ -186,6 +186,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         }
         graphics.text(font, playerInventoryTitle, inventoryLabelX, inventoryLabelY, LABEL, false);
         graphics.text(font, Component.literal("Спорядження"), HelperMenu.LEFT, HelperMenu.EQUIPMENT_Y - 12, LABEL, false);
+        graphics.text(font, Component.literal("Вантаж"), 236, HelperMenu.EQUIPMENT_Y - 12, LABEL, false);
         graphics.text(font, Component.literal("Сумка"), HelperMenu.LEFT, HelperMenu.BAG_Y - 12, LABEL, false);
 
         if (selectedTab == Tab.MOVEMENT) graphics.text(font, Component.literal("Радіус:"), HelperMenu.LEFT, RANGE_Y + 6, LABEL, false);
@@ -221,11 +222,16 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
 
     private static String actionName(final dev.npchelper.work.HelperStep.View step) {
         return switch (step.type()) {
+            case "prepare_kit" -> "Перевірити 10 землі та власний верстак";
+            case "prepare_tools" -> "Підготувати інструменти професії";
+            case "prepare_store" -> "Знайти скриню та позначити склад";
+            case "keeper_work" -> "Переносити ресурси й об'єднувати стаки";
+            case "keeper_deliver" -> "Доставити збережений вантаж";
             case "prepare_grove" -> "Знайти або підготувати табличку «гай»";
             case "prepare_axe" -> "Знайти або виготовити сокиру";
             case "mark_grove" -> "Знайти дерево й поставити табличку";
             case "bootstrap_wood" -> "Добути колоди для підготовки";
-            case "gather_wood" -> "Заготовити деревину";
+            case "gather_wood" -> step.item().equals("#materials") ? "Добути деревину для крафту" : "Заготовити деревину";
             case "gather_dirt" -> "Зібрати землю для сходинок";
             case "craft" -> "Виготовити: " + itemName(step.item());
             case "fetch" -> "Забрати зі сховища: " + itemName(step.item());

@@ -101,5 +101,5 @@ jar {
     exclude 'dev/npchelper/gametest/**'
     exclude 'data/npchelper/test_instance/**'
     exclude 'data/npchelper/test_environment/**'
-    exclude 'data/npchelper/structure/regression_arena.nbt'
+    exclude 'data/npchelper/structure/regression_*.nbt'
 }

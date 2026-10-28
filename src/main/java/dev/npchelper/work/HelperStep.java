@@ -7,6 +7,11 @@ import net.minecraft.world.level.storage.ValueOutput;
 public final class HelperStep {
     /** Fell logs until the count is in the bag. */
     public static final String GATHER_WOOD = "gather_wood";
+    public static final String PREPARE_KIT = "prepare_kit";
+    public static final String PREPARE_TOOLS = "prepare_tools";
+    public static final String PREPARE_STORE = "prepare_store";
+    public static final String KEEPER_WORK = "keeper_work";
+    public static final String KEEPER_DELIVER = "keeper_deliver";
     public static final String PREPARE_GROVE = "prepare_grove";
     public static final String PREPARE_AXE = "prepare_axe";
     public static final String MARK_GROVE = "mark_grove";

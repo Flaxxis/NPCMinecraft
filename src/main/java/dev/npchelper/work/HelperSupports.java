@@ -22,7 +22,7 @@ public final class HelperSupports {
     /** No higher than this: a helper builds a step, not a tower. */
     public static final int MAX_STEPS = 6;
     /** Dirt a trade carries for the purpose. */
-    public static final int CARRY = 16;
+    public static final int CARRY = 10;
 
     private final NpcHelperEntity helper;
     private final List<BlockPos> placed = new ArrayList<>();

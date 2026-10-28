@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:double_chest_inventory",
+  "environment": "minecraft:default",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 100
+}

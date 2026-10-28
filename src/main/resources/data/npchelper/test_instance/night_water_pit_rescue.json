@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:night_water_pit_rescue",
+  "environment": "npchelper:night_water_rescue",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 1000
+}

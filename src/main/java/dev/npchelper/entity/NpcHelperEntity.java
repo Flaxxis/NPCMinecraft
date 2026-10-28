@@ -76,6 +76,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private final HelperEating eating = new HelperEating(this);
 
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
+    private final SimpleContainer cargo = new SimpleContainer(1);
     private final dev.npchelper.work.HelperPickup pickup = new dev.npchelper.work.HelperPickup(this);
     private final dev.npchelper.work.HelperBreaking breaking = new dev.npchelper.work.HelperBreaking(this, pickup);
     private final dev.npchelper.work.HelperQueue queue = new dev.npchelper.work.HelperQueue();
@@ -113,6 +114,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
     public HelperEating eating() { return eating; }
     public HelperPassages passages() { return passages; }
+    public void cancelWorkForRescue() {
+        workGoal.resetTask();
+        queue.clear();
+        getNavigation().stop();
+    }
+
     public String workProblem() { return workGoal.problem(); }
     public HelperNightGoal nightGoal() { return nightGoal; }
     public boolean isExpedition() { return entityData.get(DATA_EXPEDITION); }
@@ -200,14 +207,21 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         pickup.tick();
         eating.tick();
         passages.tick();
+        nightGoal.safetyTick();
         // A cancelled job may leave a scaffold but no queue. Descend before night travel can take over.
         if (queue.isEmpty() && supports.any() && nightGoal.wanted()) {
             queue.set(java.util.List.of(new dev.npchelper.work.HelperStep(
                     dev.npchelper.work.HelperStep.RECOVER_SUPPORTS, "", 1)));
         }
 
+        if (queue.isEmpty() && getProfession() != HelperProfession.NONE && getTarget() == null
+                && !mustReturnToOwner() && !nightGoal.wanted() && !dev.npchelper.work.HelperResources.ready(this)) {
+            queue.set(java.util.List.of(
+                    new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.PREPARE_KIT, "", 1),
+                    new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.PREPARE_TOOLS, "", 1)));
+        }
         // A trade with nothing left in the queue takes a breath and then looks for the next job of its own.
-        if (queue.isEmpty() && (getProfession() != HelperProfession.NONE || supports.any() || placedBench != null)
+        if (queue.isEmpty() && (getProfession() != HelperProfession.NONE || supports.any() || placedBench != null || !cargo.isEmpty())
                 && getTarget() == null && !mustReturnToOwner() && !nightGoal.wanted()) {
             if (++restTicks > REST_TICKS) {
                 restTicks = 0;
@@ -271,6 +285,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return count;
     }
 
+    public SimpleContainer getCargo() { return cargo; }
+
     public SimpleContainer getBag() {
         return bag;
     }
@@ -303,6 +319,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     public void takeInHand(final net.minecraft.world.item.Item item) {
         ItemStack held = getMainHandItem();
         if (held.is(item)) return;
+        if (getOffhandItem().is(item)) {
+            ItemStack selected = getOffhandItem().copy();
+            equipFromPlayer(EquipmentSlot.OFFHAND, held.copy());
+            equipFromPlayer(EquipmentSlot.MAINHAND, selected);
+            return;
+        }
         for (int slot = 0; slot < bag.getContainerSize(); slot++) {
             ItemStack stack = bag.getItem(slot);
             if (!stack.is(item)) continue;
@@ -425,6 +447,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void dropCustomDeathLoot(final ServerLevel level, final DamageSource source, final boolean hitByPlayer) {
         super.dropCustomDeathLoot(level, source, hitByPlayer);
         for (int slot = 0; slot < bag.getContainerSize(); slot++) spawnAtLocation(level, bag.removeItemNoUpdate(slot));
+        spawnAtLocation(level, cargo.removeItemNoUpdate(0));
     }
 
     @Override
@@ -439,6 +462,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         output.putInt("AnchorY", anchor.getY());
         output.putInt("AnchorZ", anchor.getZ());
         ContainerHelper.saveAllItems(output.child("Bag"), bag.getItems());
+        ContainerHelper.saveAllItems(output.child("Cargo"), cargo.getItems());
         queue.store(output.child("Work"));
         supports.store(output.child("Supports"));
         passages.store(output.child("Passages"));
@@ -457,6 +481,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         anchor = new BlockPos(input.getIntOr("AnchorX", 0), input.getIntOr("AnchorY", 0), input.getIntOr("AnchorZ", 0));
         if (anchor.equals(BlockPos.ZERO)) anchor = blockPosition();
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());
+        ContainerHelper.loadAllItems(input.childOrEmpty("Cargo"), cargo.getItems());
         queue.load(input.childOrEmpty("Work"));
         supports.load(input.childOrEmpty("Supports"));
         passages.load(input.childOrEmpty("Passages"));

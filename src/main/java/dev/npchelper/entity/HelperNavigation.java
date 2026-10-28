@@ -35,7 +35,7 @@ public final class HelperNavigation extends GroundPathNavigation {
     }
     public static net.minecraft.world.level.pathfinder.@org.jspecify.annotations.Nullable Path probe(
             final NpcHelperEntity helper, final BlockPos target, final int reach) {
-        int radius = Math.max(32, Math.min(96, (int) Math.ceil(helper.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(target))) + 16));
+        int radius = Math.max(32, Math.min(160, (int) Math.ceil(helper.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(target))) + 16));
         BlockPos from = helper.blockPosition();
         var region = new net.minecraft.world.level.PathNavigationRegion(helper.level(), from.offset(-radius, -radius, -radius), from.offset(radius, radius, radius));
         var finder = new PathFinder(evaluator(), radius * 16);

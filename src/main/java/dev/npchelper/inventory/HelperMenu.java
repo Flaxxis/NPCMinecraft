@@ -25,7 +25,7 @@ public final class HelperMenu extends AbstractContainerMenu {
 
     public static final int EQUIPMENT_COUNT = HelperEquipmentContainer.SLOTS.length;
     public static final int BAG_SIZE = NpcHelperEntity.BAG_SIZE;
-    private static final int HELPER_SLOTS = EQUIPMENT_COUNT + BAG_SIZE;
+    private static final int HELPER_SLOTS = EQUIPMENT_COUNT + BAG_SIZE + 1;
 
     /** Laid out by the screen, which draws a frame around each one. */
     public static final int LEFT = 12, EQUIPMENT_Y = 146, BAG_Y = 178, PLAYER_Y = 248, HOTBAR_Y = 306;
@@ -61,8 +61,7 @@ public final class HelperMenu extends AbstractContainerMenu {
         if (helper.isRetreating()) status = "Відступає до власника";
         else if (helper.getTarget() != null) status = "Бій — роботу призупинено";
         else if (helper.mustReturnToOwner()) status = "Повертається до власника — роботу призупинено";
-        else if (helper.nightGoal().active()) status = helper.nightGoal().hasDestination()
-                ? "Ніч — іде додому або відпочиває в укритті" : "Ніч — шукає дім або вхід до укриття";
+        else if (helper.nightGoal().wanted()) status = helper.nightGoal().status();
         else if (helper.pickup().isChasing()) status = "Підбирає доступну здобич";
         else if (helper.pickup().waitingForSpace()) status = "Сумка повна — підбір призупинено";
         else if (helper.pickup().hasDeferredDrops()) status = "Недоступна здобич — підбір відкладено";
@@ -137,6 +136,7 @@ public final class HelperMenu extends AbstractContainerMenu {
                 addSlot(inventorySlot(bag, column + row * 9, LEFT + column * 18, BAG_Y + row * 18));
             }
         }
+        addSlot(inventorySlot(helper == null ? new SimpleContainer(1) : helper.getCargo(), 0, 254, EQUIPMENT_Y));
         for (int row = 0; row < 3; row++) {
             for (int column = 0; column < 9; column++) {
                 addSlot(inventorySlot(inventory, 9 + column + row * 9, LEFT + column * 18, PLAYER_Y + row * 18));
@@ -189,8 +189,12 @@ public final class HelperMenu extends AbstractContainerMenu {
             if (!moveItemStackTo(stack, HELPER_SLOTS, slots.size(), true)) return ItemStack.EMPTY;
         } else {
             // Armour and weapons find their own slot first, everything else goes to the bag.
-            if (!moveItemStackTo(stack, 0, EQUIPMENT_COUNT, false)
-                    && !moveItemStackTo(stack, EQUIPMENT_COUNT, HELPER_SLOTS, false)) {
+            boolean gear = stack.has(net.minecraft.core.component.DataComponents.EQUIPPABLE)
+                    || stack.has(net.minecraft.core.component.DataComponents.TOOL)
+                    || stack.is(net.minecraft.tags.ItemTags.SWORDS) || stack.is(net.minecraft.world.item.Items.SHIELD)
+                    || stack.is(net.minecraft.world.item.Items.BOW) || stack.is(net.minecraft.world.item.Items.CROSSBOW);
+            if (!(gear && moveItemStackTo(stack, 0, EQUIPMENT_COUNT, false))
+                    && !moveItemStackTo(stack, EQUIPMENT_COUNT, EQUIPMENT_COUNT + BAG_SIZE, false)) {
                 return ItemStack.EMPTY;
             }
         }

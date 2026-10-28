@@ -40,6 +40,7 @@ public final class HelperObtain {
     /** A bench within reach means a 3x3 recipe needs no new one. */
     private boolean bench;
     private int projectedLogs;
+    private final List<ItemStack> stored = new ArrayList<>();
     private final Map<String, Integer> bag = new HashMap<>();
     private final List<HelperStep> steps = new ArrayList<>();
     private final Set<String> active = new HashSet<>();
@@ -56,8 +57,14 @@ public final class HelperObtain {
 
     public static Plan plan(final ServerLevel level, final List<ItemStack> carried, final boolean benchNearby,
                             final Item wanted, final int count) {
+        return plan(level, carried, benchNearby, wanted, count, List.of());
+    }
+
+    public static Plan plan(final ServerLevel level, final List<ItemStack> carried, final boolean benchNearby,
+                            final Item wanted, final int count, final List<ItemStack> stored) {
         boolean hasBench = benchNearby || carried.stream().anyMatch(stack -> stack.is(Items.CRAFTING_TABLE));
         HelperObtain planner = new HelperObtain(level, carried, hasBench);
+        for (ItemStack stack : stored) planner.stored.add(stack.copy());
         if (!planner.need(key(wanted), count, 0)) {
             return new Plan(List.of(), planner.why == null ? "Не знаю, де взяти " + name(wanted) + "." : planner.why);
         }
@@ -76,6 +83,16 @@ public final class HelperObtain {
         }
         bag.put(key, 0);
         int missing = count - have;
+        for (ItemStack stack : stored) {
+            if (stack.isEmpty() || !key(stack.getItem()).equals(key)) continue;
+            int fetched = Math.min(missing, stack.getCount());
+            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            if (!add(new HelperStep(HelperStep.FETCH, itemId, fetched))) return false;
+            stack.shrink(fetched);
+            if (key.equals(LOGS)) projectedLogs += fetched;
+            missing -= fetched;
+            if (missing == 0) return true;
+        }
         if (depth > MAX_DEPTH || !active.add(key)) return refuse("Ланцюжок для " + key + " заплутався.");
         try {
             return produce(key, missing, depth);
@@ -88,7 +105,7 @@ public final class HelperObtain {
         switch (key) {
             case LOGS -> {
                 projectedLogs += count;
-                return add(new HelperStep(HelperStep.GATHER_WOOD, "", projectedLogs));
+                return add(new HelperStep(HelperStep.GATHER_WOOD, "#materials", projectedLogs));
             }
             // Intermediate crafts preserve their surplus for subsequent recipe ingredients.
             case PLANKS -> {
@@ -145,6 +162,7 @@ public final class HelperObtain {
             boolean large = HelperCrafting.needsBench(recipe);
 
             var saved = Map.copyOf(bag);
+            var savedStored = stored.stream().map(ItemStack::copy).toList();
             int stepsBefore = steps.size();
             boolean savedBench = bench;
             int savedLogs = projectedLogs;
@@ -165,6 +183,8 @@ public final class HelperObtain {
             }
             bench = savedBench;
             projectedLogs = savedLogs;
+            stored.clear();
+            for (ItemStack stack : savedStored) stored.add(stack.copy());
             bag.clear();
             bag.putAll(saved);
             while (steps.size() > stepsBefore) steps.removeLast();

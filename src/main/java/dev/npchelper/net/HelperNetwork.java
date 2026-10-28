@@ -12,7 +12,7 @@ import net.minecraftforge.network.SimpleChannel;
  * The mode and profession buttons use the vanilla menu-button packet.
  */
 public final class HelperNetwork {
-    private static final int PROTOCOL = 3;
+    private static final int PROTOCOL = 4;
 
     public static final SimpleChannel CHANNEL = ChannelBuilder
             .named(Identifier.fromNamespaceAndPath(NpcHelperMod.MODID, "main"))

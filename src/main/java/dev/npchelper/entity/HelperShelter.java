@@ -55,9 +55,13 @@ public final class HelperShelter {
         return walls >= 3;
     }
 
-    private static @Nullable BlockPos reachable(final NpcHelperEntity helper, final List<BlockPos> candidates) {
+    private static @Nullable BlockPos reachable(final NpcHelperEntity helper, final List<BlockPos> candidates, final boolean requirePath) {
         candidates.sort(Comparator.comparingDouble(pos -> pos.distToCenterSqr(helper.position())));
         for (BlockPos pos : candidates) {
+            if (!requirePath) {
+                if (safeTeleport(helper, pos)) return pos;
+                continue;
+            }
             if (pos.distToCenterSqr(helper.position()) < 1) return pos;
             var path = helper.getNavigation().createPath(pos, 0);
             if (path != null && path.canReach()) return pos;
@@ -65,7 +69,18 @@ public final class HelperShelter {
         return null;
     }
 
-    public static @Nullable BlockPos find(final NpcHelperEntity helper) {
+    public static @Nullable BlockPos find(final NpcHelperEntity helper) { return find(helper, true); }
+
+    public static boolean safeTeleport(final NpcHelperEntity helper, final BlockPos pos) {
+        if (!(helper.level() instanceof ServerLevel level) || !standable(level, pos)) return false;
+        var pathType = net.minecraft.world.level.pathfinder.WalkNodeEvaluator.getPathTypeStatic(helper, pos);
+        if (helper.getPathfindingMalus(pathType) < 0) return false;
+        var box = helper.getBoundingBox().move(net.minecraft.world.phys.Vec3.atBottomCenterOf(pos).subtract(helper.position()));
+        return level.noCollision(helper, box) && !level.containsAnyLiquid(box)
+                && level.getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class, box, entity -> entity != helper).isEmpty();
+    }
+
+    public static @Nullable BlockPos find(final NpcHelperEntity helper, final boolean requirePath) {
         if (!(helper.level() instanceof ServerLevel level)) return null;
         var homes = HelperSigns.around(level, helper.blockPosition(), 64, HelperSigns.Mark.HOME);
         for (BlockPos home : homes) {
@@ -75,12 +90,12 @@ public final class HelperShelter {
                 if (indoors(level, pos)) inside.add(pos);
                 else if (pos.distSqr(home) <= 9 && standable(level, pos)) nearby.add(pos);
             }
-            BlockPos found = reachable(helper, inside);
+            BlockPos found = reachable(helper, inside, requirePath);
             if (found != null) return found;
-            found = reachable(helper, nearby);
+            found = reachable(helper, nearby, requirePath);
             if (found != null) return found; // An explicit home marker remains useful even without a valid room.
         }
-        if (indoors(level, helper.blockPosition())) return helper.blockPosition();
+        if (indoors(level, helper.blockPosition()) && (requirePath || safeTeleport(helper, helper.blockPosition()))) return helper.blockPosition();
         BlockPos origin = helper.blockPosition();
         List<BlockPos> doors = new ArrayList<>();
         int radius = 32;
@@ -107,7 +122,7 @@ public final class HelperShelter {
             for (BlockPos cursor : BlockPos.betweenClosed(door.offset(-3, -1, -3), door.offset(3, 1, 3))) {
                 if (indoors(level, cursor)) inside.add(cursor.immutable());
             }
-            BlockPos found = reachable(helper, inside);
+            BlockPos found = reachable(helper, inside, requirePath);
             if (found != null) return found;
         }
         return null;

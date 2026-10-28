@@ -17,6 +17,11 @@ public final class HelperNightGoal extends Goal {
     private boolean active;
     private boolean settled;
     private int wanderCooldown;
+    public static final int RESCUE_TICKS = 20 * 30;
+    private long rescueStarted = -1;
+    private long nextRescueSearch;
+    private long rescuedUntil;
+    private String rescueProblem = "";
 
     public HelperNightGoal(final NpcHelperEntity helper) {
         this.helper = helper;
@@ -31,6 +36,48 @@ public final class HelperNightGoal extends Goal {
     public boolean wanted() { return !helper.isExpedition() && night(helper); }
     public boolean active() { return active; }
     public boolean hasDestination() { return destination != null; }
+
+    public String status() {
+        if (helper.level().getGameTime() < rescuedUntil) return "Телепортувався до безпечного нічлігу";
+        if (!rescueProblem.isEmpty()) return rescueProblem;
+        if (hasDestination()) return "Ніч — іде додому або відпочиває в укритті";
+        return "Ніч — шукає дім або вхід до укриття";
+    }
+
+    /** Independent of movement goals: floating, combat or a failed route cannot prevent the timeout. */
+    public void safetyTick() {
+        if (!(helper.level() instanceof ServerLevel level)) return;
+        long now = level.getGameTime();
+        if (!wanted() || HelperShelter.indoors(level, helper.blockPosition())) {
+            rescueStarted = -1;
+            rescueProblem = "";
+            return;
+        }
+        if (rescueStarted < 0) rescueStarted = now;
+        if (now - rescueStarted < RESCUE_TICKS || now < nextRescueSearch) return;
+        nextRescueSearch = now + 100;
+        BlockPos safe = HelperShelter.find(helper, false);
+        if (safe == null || !HelperShelter.safeTeleport(helper, safe)) {
+            rescueProblem = "Не знайшов безпечної точки для нічного переходу";
+            return;
+        }
+        if (!HelperShelter.indoors(level, safe) && safe.distToCenterSqr(helper.position()) < 1) {
+            rescueStarted = now;
+            return;
+        }
+        helper.cancelWorkForRescue();
+        helper.setTarget(null);
+        helper.teleportTo(safe.getX() + 0.5D, safe.getY(), safe.getZ() + 0.5D);
+        helper.setDeltaMovement(Vec3.ZERO);
+        helper.fallDistance = 0;
+        destination = safe;
+        settled = true;
+        bestDistance = 0;
+        lastProgress = now;
+        rescueStarted = -1;
+        rescueProblem = "";
+        rescuedUntil = now + 80;
+    }
 
     @Override public boolean canUse() {
         return wanted() && helper.getTarget() == null && !helper.isRetreating() && !helper.supports().any() && !helper.pickup().canChase();

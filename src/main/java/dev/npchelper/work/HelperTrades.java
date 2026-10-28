@@ -37,6 +37,8 @@ public final class HelperTrades {
 
         if (helper.supports().any()) plan.add(new HelperStep(HelperStep.RECOVER_SUPPORTS, "", 1));
         if (helper.placedBench() != null) plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
+        if (!helper.getCargo().isEmpty()) plan.add(new HelperStep(HelperStep.KEEPER_DELIVER, "", 1));
+        if (profession != HelperProfession.NONE) plan.add(new HelperStep(HelperStep.PREPARE_KIT, "", 1));
         if (profession == HelperProfession.LUMBERJACK) {
             // Resolve each preparation stage from the real inventory left by the previous one.
             plan.add(new HelperStep(HelperStep.PREPARE_GROVE, "", 1));
@@ -45,8 +47,12 @@ public final class HelperTrades {
             plan.add(new HelperStep(HelperStep.GATHER_DIRT, "", HelperSupports.CARRY));
             plan.add(new HelperStep(HelperStep.GATHER_WOOD, "", WOOD_LOAD));
             plan.add(new HelperStep(HelperStep.STORE, "", 1));
-        } else {
-            for (HelperToolkit.Tool tool : HelperToolkit.needs(profession)) addTool(level, helper, tool, plan);
+        } else if (profession == HelperProfession.KEEPER) {
+            plan.add(new HelperStep(HelperStep.PREPARE_STORE, "", 1));
+            plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
+            plan.add(new HelperStep(HelperStep.KEEPER_WORK, "", 1));
+        } else if (profession != HelperProfession.NONE) {
+            plan.add(new HelperStep(HelperStep.PREPARE_TOOLS, "", 1));
         }
         if (!plan.isEmpty()) plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
         return plan;
@@ -55,6 +61,16 @@ public final class HelperTrades {
     public static List<HelperStep> prepareAxe(final NpcHelperEntity helper) {
         List<HelperStep> plan = new ArrayList<>();
         if (helper.level() instanceof ServerLevel level) addTool(level, helper, HelperToolkit.Tool.AXE, plan);
+        return plan;
+    }
+
+    public static List<HelperStep> prepareTools(final NpcHelperEntity helper) {
+        List<HelperStep> plan = new ArrayList<>();
+        if (helper.level() instanceof ServerLevel level) {
+            for (HelperToolkit.Tool tool : HelperToolkit.needs(helper.getProfession())) {
+                if (HelperToolkit.best(helper, tool).isEmpty()) { addTool(level, helper, tool, plan); break; }
+            }
+        }
         return plan;
     }
 
@@ -77,12 +93,7 @@ public final class HelperTrades {
 
         // Nothing anywhere: make the plainest one, from the ground up if need be.
         var plain = tool.plainest();
-        var carriedStacks = new ArrayList<ItemStack>();
-        for (int slot = 0; slot < helper.getBag().getContainerSize(); slot++) carriedStacks.add(helper.getBag().getItem(slot));
-        boolean bench = HelperCrafting.findBench(helper) != null || plan.stream().anyMatch(step ->
-                step.type().equals(HelperStep.CRAFT) && step.item().equals("minecraft:crafting_table"));
-
-        HelperObtain.Plan obtained = HelperObtain.plan(level, carriedStacks, bench, plain, 1);
+        HelperObtain.Plan obtained = HelperResources.plan(helper, plain, 1);
         if (obtained.refused()) return;
         plan.addAll(obtained.steps());
         plan.add(new HelperStep(HelperStep.EQUIP, HelperObtain.key(plain), 1));
@@ -93,7 +104,9 @@ public final class HelperTrades {
                                              final HelperToolkit.Tool tool) {
         Item best = null;
         int bestQuality = -1;
-        for (var pos : HelperContainers.around(level, helper.blockPosition(), HelperToolkit.FETCH_RADIUS)) {
+        for (var pos : HelperResources.storages(helper)) {
+            best = null;
+            bestQuality = -1;
             var container = HelperContainers.containerAt(level, pos);
             if (container == null) continue;
             for (int slot = 0; slot < container.getContainerSize(); slot++) {
@@ -104,7 +117,8 @@ public final class HelperTrades {
                     best = stack.getItem();
                 }
             }
+            if (best != null) return best;
         }
-        return best;
+        return null;
     }
 }

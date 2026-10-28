@@ -29,6 +29,7 @@ public final class HelperWorkGoal extends Goal {
     private enum Phase { FELL, CROWN, RECOVER, PLANT }
 
     private final NpcHelperEntity helper;
+    private final HelperKeeper keeper;
     private @Nullable HelperStep activeStep;
     private @Nullable BlockPos site;
     private @Nullable List<BlockPos> trunk;
@@ -43,10 +44,11 @@ public final class HelperWorkGoal extends Goal {
     private long markerLastProgress;
     private double markerDistance = Double.MAX_VALUE;
 
-    public String problem() { return problem; }
+    public String problem() { return problem.isEmpty() ? keeper.problem() : problem; }
 
     public HelperWorkGoal(final NpcHelperEntity helper) {
         this.helper = helper;
+        this.keeper = new HelperKeeper(helper);
         setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
@@ -66,11 +68,18 @@ public final class HelperWorkGoal extends Goal {
         helper.breaking().reset();
         helper.getNavigation().stop();
         site = null;
+        keeper.reset();
     }
 
     @Override
     public void tick() {
         HelperStep step = helper.queue().current();
+        if (step != activeStep && step != null && helper.getProfession() != dev.npchelper.entity.HelperProfession.NONE
+                && !helper.supports().any() && needsKit(step) && !kitReady()
+                && helper.queue().snapshot().stream().noneMatch(view -> view.type().equals(HelperStep.PREPARE_KIT))) {
+            helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));
+            step = helper.queue().current();
+        }
         if (step != activeStep) {
             resetTask();
             activeStep = step;
@@ -80,6 +89,24 @@ public final class HelperWorkGoal extends Goal {
 
         switch (step.type()) {
             case HelperStep.GATHER_WOOD, HelperStep.BOOTSTRAP_WOOD -> gatherWood(level, step);
+            case HelperStep.PREPARE_KIT -> prepareKit(level, step);
+            case HelperStep.PREPARE_TOOLS -> {
+                var plan = HelperTrades.prepareTools(helper);
+                if (plan.isEmpty()) {
+                    if (HelperToolkit.missing(helper, helper.getProfession()) == null) helper.queue().advance();
+                    else problem = "Бракує ресурсів для інструментів професії";
+                } else helper.queue().prepend(plan);
+            }
+            case HelperStep.PREPARE_STORE -> {
+                if (keeper.prepare(level)) helper.queue().advance();
+            }
+            case HelperStep.KEEPER_DELIVER -> {
+                if (keeper.deliver(level)) helper.queue().advance();
+            }
+            case HelperStep.KEEPER_WORK -> {
+                if (!kitReady()) helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));
+                else if (keeper.tick(level)) helper.queue().advance();
+            }
             case HelperStep.PREPARE_GROVE -> prepareGrove(level);
             case HelperStep.PREPARE_AXE -> prepareAxe();
             case HelperStep.MARK_GROVE -> markGrove(level);
@@ -103,6 +130,7 @@ public final class HelperWorkGoal extends Goal {
         helper.breaking().reset();
         helper.getNavigation().stop();
         activeStep = null;
+        keeper.reset();
         site = null;
         trunk = null;
         crown = null;
@@ -159,6 +187,64 @@ public final class HelperWorkGoal extends Goal {
         if (!best.isEmpty()) helper.takeInHand(best.getItem());
     }
 
+    private int soilCount() { return HelperResources.soilCount(helper); }
+    private boolean kitReady() { return HelperResources.ready(helper); }
+
+    private boolean needsKit(final HelperStep step) {
+        return switch (step.type()) {
+            case HelperStep.PREPARE_GROVE, HelperStep.PREPARE_AXE, HelperStep.PREPARE_TOOLS,
+                    HelperStep.MARK_GROVE, HelperStep.PREPARE_STORE, HelperStep.KEEPER_WORK,
+                    HelperStep.STORE, HelperStep.GATHER_WOOD -> true;
+            default -> false;
+        };
+    }
+
+    private void stowKitItems() {
+        for (var hand : net.minecraft.world.InteractionHand.values()) {
+            ItemStack held = helper.getItemInHand(hand);
+            if (!held.is(net.minecraft.world.item.Items.CRAFTING_TABLE) && !held.is(ItemTags.DIRT)) continue;
+            ItemStack left = helper.getBag().addItem(held.copy());
+            helper.setItemInHand(hand, left);
+        }
+    }
+
+    private void prepareKit(final ServerLevel level, final HelperStep step) {
+        stowKitItems();
+        if (helper.getBag().countItem(net.minecraft.world.item.Items.CRAFTING_TABLE) == 0) {
+            if (helper.placedBench() != null) {
+                helper.queue().prepend(List.of(new HelperStep(HelperStep.TAKE_BENCH, "", 1)));
+                return;
+            }
+            if (helper.pickup().hasPendingItem(net.minecraft.world.item.Items.CRAFTING_TABLE)) return;
+            var plan = HelperResources.plan(helper, net.minecraft.world.item.Items.CRAFTING_TABLE, 1);
+            if (plan.refused() || plan.steps().isEmpty()) { problem = "Бракує ресурсів для власного верстака"; return; }
+            helper.queue().prepend(plan.steps());
+            return;
+        }
+        int soil = soilCount();
+        if (soil < HelperSupports.CARRY) {
+            for (BlockPos pos : HelperResources.storages(helper)) {
+                var container = HelperContainers.containerAt(level, pos);
+                if (container == null) continue;
+                for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                    ItemStack stack = container.getItem(slot);
+                    if (stack.is(ItemTags.DIRT)) {
+                        helper.queue().prepend(List.of(new HelperStep(HelperStep.FETCH,
+                                net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), HelperSupports.CARRY - soil)));
+                        return;
+                    }
+                }
+            }
+            if (step.done() == 0) {
+                step.reconcile(1);
+                helper.queue().prepend(List.of(new HelperStep(HelperStep.GATHER_DIRT, "", HelperSupports.CARRY)));
+            } else problem = "Потрібно 10 землі — немає безпечного місця для добування";
+            return;
+        }
+        problem = "";
+        helper.queue().advance();
+    }
+
     // ---- lumberjack preparation ----
 
     private @Nullable BlockPos grove(final ServerLevel level) {
@@ -179,7 +265,7 @@ public final class HelperWorkGoal extends Goal {
             carried.add(stack);
             if (stack.is(ItemTags.LOGS)) logs += stack.getCount();
         }
-        var plan = HelperObtain.plan(level, carried, bench, net.minecraft.world.item.Items.OAK_SIGN, 1);
+        var plan = HelperResources.plan(helper, net.minecraft.world.item.Items.OAK_SIGN, 1);
         boolean needsWood = plan.steps().stream().anyMatch(step -> step.type().equals(HelperStep.GATHER_WOOD));
         if (!bench && !carriedBench && logs < 5 && needsWood) {
             helper.queue().prepend(List.of(new HelperStep(HelperStep.BOOTSTRAP_WOOD, "", 5)));
@@ -288,6 +374,14 @@ public final class HelperWorkGoal extends Goal {
             helper.queue().advance();
             resetTask();
             return;
+        }
+        if (trunk == null && step.type().equals(HelperStep.GATHER_WOOD) && step.item().isEmpty()
+                && helper.getProfession() == dev.npchelper.entity.HelperProfession.LUMBERJACK) {
+            if (!kitReady()) { helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1))); return; }
+            if (HelperToolkit.best(helper, HelperToolkit.Tool.AXE).isEmpty()) {
+                helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_AXE, "", 1)));
+                return;
+            }
         }
         if (trunk == null) {
             BlockPos first = findLog(level);
@@ -536,36 +630,52 @@ public final class HelperWorkGoal extends Goal {
 
     private void fetch(final ServerLevel level, final HelperStep step) {
         var wanted = HelperCrafting.item(step.item());
-        if (wanted == null) {
-            helper.queue().advance();
-            return;
-        }
-        if (site == null || HelperContainers.containerAt(level, site) == null) {
-            site = HelperContainers.findHolding(level, helper.blockPosition(), HelperToolkit.FETCH_RADIUS,
-                    stack -> stack.is(wanted));
+        if (wanted == null || step.finished()) { helper.queue().advance(); return; }
+        helper.getNavigation().setRequiredPathLength(Math.max(96, helper.workRadius() * 2 + 16));
+        if (site != null) {
+            var container = HelperContainers.containerAt(level, site);
+            boolean holds = false;
+            if (container != null) for (int slot = 0; slot < container.getContainerSize(); slot++) if (container.getItem(slot).is(wanted)) { holds = true; break; }
+            if (!holds) site = null;
         }
         if (site == null) {
-            helper.queue().advance();
-            return;
+            for (BlockPos pos : HelperResources.storages(helper)) {
+                var container = HelperContainers.containerAt(level, pos);
+                if (container == null) continue;
+                boolean holds = false;
+                for (int slot = 0; slot < container.getContainerSize(); slot++) if (container.getItem(slot).is(wanted)) { holds = true; break; }
+                if (!holds) continue;
+                var path = dev.npchelper.entity.HelperNavigation.probe(helper, pos, 1);
+                if (helper.breaking().inReach(pos) || (path != null && path.canReach())) { site = pos; break; }
+            }
         }
+        if (site == null) { helper.queue().advance(); return; }
         if (!helper.breaking().inReach(site)) {
-            approach(site);
+            if (helper.getNavigation().isDone() || helper.getNavigation().isStuck()) {
+                var path = dev.npchelper.entity.HelperNavigation.probe(helper, site, 1);
+                if (path != null && path.canReach()) helper.getNavigation().moveTo(path, SPEED);
+            }
             return;
         }
         var container = HelperContainers.containerAt(level, site);
-        if (container != null) {
-            var taken = HelperContainers.take(container, stack -> stack.is(wanted));
-            if (!taken.isEmpty()) {
-                ItemStack left = helper.getBag().addItem(taken);
-                if (!left.isEmpty()) {
-                    ItemStack overflow = HelperContainers.put(container, left);
-                    if (!overflow.isEmpty()) helper.pickup().drop(site, List.of(overflow));
-                }
+        if (container == null) { site = null; return; }
+        for (int slot = 0; slot < container.getContainerSize() && !step.finished(); slot++) {
+            ItemStack stack = container.getItem(slot);
+            if (!stack.is(wanted)) continue;
+            int amount = Math.min(step.count() - step.done(), stack.getCount());
+            ItemStack taken = container.removeItem(slot, amount);
+            ItemStack left = helper.getBag().addItem(taken);
+            int moved = taken.getCount() - left.getCount();
+            if (!left.isEmpty()) {
+                ItemStack overflow = HelperContainers.put(container, left);
+                if (!overflow.isEmpty()) helper.pickup().drop(site, List.of(overflow));
             }
+            container.setChanged();
+            if (moved > 0) { step.reconcile(step.done() + moved); helper.queue().noteProgress(); }
+            else { problem = "Немає місця в сумці для матеріалів"; return; }
         }
         site = null;
-        helper.queue().noteProgress();
-        helper.queue().advance();
+        if (step.finished()) helper.queue().advance();
     }
 
     private void craft(final ServerLevel level, final HelperStep step) {

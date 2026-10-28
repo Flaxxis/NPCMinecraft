@@ -67,6 +67,26 @@ public final class HelperRegressionTests {
         tests.register("player_feeding", () -> HelperRegressionTests::playerFeeding);
         tests.register("inventory_harvest_count", () -> HelperRegressionTests::inventoryHarvestCount);
         tests.register("planned_inventory_target", () -> HelperRegressionTests::plannedInventoryTarget);
+        tests.register("common_profession_kit", () -> HelperRegressionTests::commonProfessionKit);
+        tests.register("warehouse_resource_priority", () -> HelperRegressionTests::warehouseResourcePriority);
+        tests.register("warehouse_crafting_materials", () -> HelperRegressionTests::warehouseCraftingMaterials);
+        tests.register("keeper_marks_storage", () -> HelperRegressionTests::keeperMarksStorage);
+        tests.register("keeper_haul_and_sort", () -> HelperRegressionTests::keeperHaulAndSort);
+        tests.register("keeper_partial_stacks", () -> HelperRegressionTests::keeperPartialStacks);
+        tests.register("keeper_full_storage", () -> HelperRegressionTests::keeperFullStorage);
+        tests.register("cargo_save_and_cancel", () -> HelperRegressionTests::cargoSaveAndCancel);
+        tests.register("storage_stack_limits", () -> HelperRegressionTests::storageStackLimits);
+        tests.register("double_chest_inventory", () -> HelperRegressionTests::doubleChestInventory);
+        tests.register("warehouse_soil_priority", () -> HelperRegressionTests::warehouseSoilPriority);
+        tests.register("ready_tool_priority", () -> HelperRegressionTests::readyToolPriority);
+        tests.register("sequential_profession_tools", () -> HelperRegressionTests::sequentialProfessionTools);
+        tests.register("night_blocked_home_rescue", () -> HelperRegressionTests::nightBlockedHomeRescue);
+        tests.register("night_water_pit_rescue", () -> HelperRegressionTests::nightWaterPitRescue);
+        tests.register("expedition_no_rescue", () -> HelperRegressionTests::expeditionNoRescue);
+        tests.register("unsafe_rescue_positions", () -> HelperRegressionTests::unsafeRescuePositions);
+        tests.register("inventory_materials_before_stock", () -> HelperRegressionTests::inventoryMaterialsBeforeStock);
+        tests.register("unreachable_warehouse_fallback", () -> HelperRegressionTests::unreachableWarehouseFallback);
+        tests.register("keeper_across_full_radius", () -> HelperRegressionTests::keeperAcrossFullRadius);
         tests.register(bus);
     }
 
@@ -183,6 +203,8 @@ public final class HelperRegressionTests {
         }
         BlockPos chest = h.absolutePos(new BlockPos(32, 1, 20));
         h.getLevel().setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), chest.north(), HelperSigns.Mark.STORE), "Cannot mark this test's destination");
         helper.queue().set(List.of(new HelperStep(HelperStep.GATHER_WOOD, "", 64), new HelperStep(HelperStep.STORE, "", 1)));
         helper.setNoAi(false);
         h.succeedWhen(() -> {
@@ -273,7 +295,7 @@ public final class HelperRegressionTests {
         for (int y = 1; y <= 7; y++) h.setBlock(new BlockPos(24, y, 20), Blocks.BIRCH_LOG);
         for (int x = 14; x <= 18; x++) for (int z = 16; z <= 20; z++) h.setBlock(new BlockPos(x, 1, z), Blocks.GRASS_BLOCK);
         helper.setProfession(HelperProfession.LUMBERJACK);
-        h.assertTrue(helper.queue().current().type().equals(HelperStep.PREPARE_GROVE), "Sign preparation must come first");
+        h.assertTrue(helper.queue().current().type().equals(HelperStep.PREPARE_KIT), "Common supplies must come first");
         helper.setNoAi(false);
         h.succeedWhen(() -> {
             BlockPos sign = HelperSigns.nearest(h.getLevel(), helper.blockPosition(), 32, HelperSigns.Mark.GROVE);
@@ -290,17 +312,21 @@ public final class HelperRegressionTests {
         helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
         BlockPos mark = helper.blockPosition().north(3);
         h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), mark, HelperSigns.Mark.GROVE), "Cannot prepare existing marker");
+        helper.getBag().addItem(new ItemStack(Items.DIRT, HelperSupports.CARRY));
+        helper.getBag().addItem(new ItemStack(Items.CRAFTING_TABLE));
         helper.setProfession(HelperProfession.LUMBERJACK);
         HelperWorkGoal goal = new HelperWorkGoal(helper);
         goal.tick();
+        goal.tick();
         h.assertTrue(helper.queue().current().type().equals(HelperStep.PREPARE_AXE), "Existing grove did not skip sign and bench preparation");
-        h.assertTrue(helper.getBag().countItem(Items.CRAFTING_TABLE) == 0, "Existing grove created a table");
+        h.assertTrue(helper.getBag().countItem(Items.CRAFTING_TABLE) == 1 && helper.placedBench() == null, "Existing grove created an extra table");
         helper.discard();
         h.succeed();
     }
 
     private static void signFromMaterials(final GameTestHelper h) {
         NpcHelperEntity helper = helper(h);
+        helper.getBag().addItem(new ItemStack(Items.DIRT, HelperSupports.CARRY));
         helper.getBag().addItem(new ItemStack(Items.BIRCH_PLANKS, 16));
         helper.getBag().addItem(new ItemStack(Items.IRON_AXE));
         helper.setProfession(HelperProfession.LUMBERJACK);
@@ -309,7 +335,7 @@ public final class HelperRegressionTests {
         helper.setNoAi(false);
         h.succeedWhen(() -> {
             h.assertTrue(helper.getBag().countItem(Items.BIRCH_SIGN) == 3, "Did not craft signs from carried birch planks");
-            h.assertTrue(helper.placedBench() != null && h.getLevel().getBlockState(helper.placedBench()).is(Blocks.CRAFTING_TABLE), "No real table made for the sign recipe");
+            h.assertTrue(helper.getBag().countItem(Items.CRAFTING_TABLE) == 1 || (helper.placedBench() != null && h.getLevel().getBlockState(helper.placedBench()).is(Blocks.CRAFTING_TABLE)), "Own table was lost during sign preparation");
             helper.discard();
         });
     }
@@ -395,7 +421,7 @@ public final class HelperRegressionTests {
         h.runAfterDelay(8, () -> {
             h.assertTrue(helper.breaking().target() != null, "Test did not reach active chopping");
             h.assertTrue(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.GUARD.ordinal()), "Profession button was rejected");
-            h.assertTrue(helper.queue().isEmpty() && helper.breaking().target() == null, "Switching profession retained chopping");
+            h.assertTrue(helper.queue().current().type().equals(HelperStep.PREPARE_KIT) && helper.breaking().target() == null, "Switching profession retained chopping");
             var saved = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, h.getLevel().registryAccess());
             helper.saveWithoutId(saved);
             h.assertTrue(saved.buildResult().getCompoundOrEmpty("TreeWork").isEmpty(), "Old tree context survived profession switch");
@@ -403,7 +429,7 @@ public final class HelperRegressionTests {
                 h.assertTrue(h.getLevel().getBlockState(log).is(Blocks.OAK_LOG), "Old chopping resumed after profession switch");
                 helper.setProfession(HelperProfession.LUMBERJACK);
                 var actions = menu.actionSnapshot().steps();
-                h.assertTrue(actions.getFirst().type().equals(HelperStep.PREPARE_GROVE), "New lumberjack chain did not start from preparation");
+                h.assertTrue(actions.getFirst().type().equals(HelperStep.PREPARE_KIT), "New lumberjack chain did not start from common preparation");
                 h.assertTrue(actions.stream().filter(step -> step.type().equals(HelperStep.GATHER_WOOD)).count() == 1, "Old harvesting step leaked into the new chain");
                 helper.discard();
                 owner.discard();
@@ -763,6 +789,406 @@ public final class HelperRegressionTests {
         h.assertTrue(helper.getBag().countItem(Items.WOODEN_AXE) == 2, "Did not make both planned tools");
         helper.discard();
         h.succeed();
+    }
+
+    private static void equipKit(final NpcHelperEntity helper) {
+        helper.getBag().addItem(new ItemStack(Items.DIRT, 10));
+        helper.getBag().addItem(new ItemStack(Items.CRAFTING_TABLE));
+    }
+
+    private static BlockPos chest(final GameTestHelper h, final int x, final int z) {
+        BlockPos pos = h.absolutePos(new BlockPos(x, 1, z));
+        h.getLevel().setBlockAndUpdate(pos, Blocks.CHEST.defaultBlockState());
+        return pos;
+    }
+
+    private static BlockPos warehouse(final GameTestHelper h, final NpcHelperEntity helper) {
+        BlockPos primary = chest(h, 5, 20);
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(4, 1, 20)), HelperSigns.Mark.STORE), "Cannot mark warehouse");
+        return primary;
+    }
+
+    private static void commonProfessionKit(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        for (HelperProfession profession : HelperProfession.values()) {
+            if (profession == HelperProfession.NONE) continue;
+            var plan = HelperTrades.planFor(helper, profession);
+            h.assertTrue(plan.getFirst().type().equals(HelperStep.PREPARE_KIT), "Profession skipped common supply check: " + profession);
+        }
+        helper.queue().set(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));
+        new HelperWorkGoal(helper).tick();
+        h.assertTrue(helper.queue().isEmpty() && helper.getBag().countItem(Items.DIRT) == 10
+                && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Existing supplies were unnecessarily crafted or consumed");
+        helper.getBag().addItem(new ItemStack(Items.DIAMOND_AXE));
+        h.assertTrue(HelperTrades.prepareAxe(helper).getFirst().item().equals("minecraft:diamond_axe"), "Ignored carried high-tier tool");
+        helper.getBag().clearContent();
+        helper.getBag().addItem(new ItemStack(Items.COPPER_AXE));
+        h.assertTrue(HelperTrades.prepareAxe(helper).getFirst().item().equals("minecraft:copper_axe"), "Ignored carried copper tool from this Minecraft version");
+        helper.discard();
+        h.succeed();
+    }
+
+    private static void warehouseResourcePriority(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.setRoamRadius(32);
+        helper.getBag().addItem(new ItemStack(Items.DIRT, 10));
+        BlockPos store = warehouse(h, helper);
+        BlockPos nearby = chest(h, 23, 20);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.CRAFTING_TABLE));
+        HelperContainers.containerAt(h.getLevel(), nearby).setItem(0, new ItemStack(Items.CRAFTING_TABLE));
+        helper.queue().set(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Did not obtain required table");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), store).countItem(Items.CRAFTING_TABLE) == 0, "Ignored marked warehouse");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), nearby).countItem(Items.CRAFTING_TABLE) == 1, "Took nearer unmarked supplies before warehouse");
+            helper.discard();
+        });
+    }
+
+    private static void warehouseCraftingMaterials(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(32);
+        BlockPos store = warehouse(h, helper);
+        BlockPos nearby = chest(h, 23, 20);
+        var stock = HelperContainers.containerAt(h.getLevel(), store);
+        stock.setItem(0, new ItemStack(Items.OAK_PLANKS, 6));
+        stock.setItem(1, new ItemStack(Items.STICK, 4));
+        HelperContainers.containerAt(h.getLevel(), nearby).setItem(0, new ItemStack(Items.OAK_LOG, 64));
+        var plan = HelperTrades.prepareAxe(helper);
+        h.assertTrue(plan.stream().noneMatch(step -> step.type().equals(HelperStep.GATHER_WOOD)), "Ignored existing crafting ingredients");
+        helper.queue().set(plan);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(!HelperToolkit.best(helper, HelperToolkit.Tool.AXE).isEmpty(), "Did not craft profession tool using stored ingredients");
+            h.assertTrue(stock.countItem(Items.OAK_PLANKS) == 3 && stock.countItem(Items.STICK) == 2, "Fetched more ingredients than required");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), nearby).countItem(Items.OAK_LOG) == 64, "Used area resources before warehouse ingredients");
+            helper.discard();
+        });
+    }
+
+    private static void keeperMarksStorage(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        for (BlockPos sign : HelperSigns.around(h.getLevel(), helper.blockPosition(), 64, HelperSigns.Mark.STORE)) h.getLevel().removeBlock(sign, false);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.OAK_PLANKS, 8));
+        helper.getBag().addItem(new ItemStack(Items.STICK));
+        chest(h, 23, 20);
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(HelperSigns.nearest(h.getLevel(), helper.blockPosition(), 16, HelperSigns.Mark.STORE) != null, "Keeper never crafted and placed STORE marker: " + state(h, helper) + ",problem=" + helper.workProblem());
+            h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10 && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Keeper did not retain personal supplies after marking storage");
+            h.assertTrue(helper.getBag().countItem(Items.OAK_SIGN) == 2, "Crafted or spent duplicate signs");
+            helper.discard();
+        });
+    }
+
+    private static void keeperHaulAndSort(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        BlockPos empty = chest(h, 10, 20);
+        BlockPos inner = chest(h, 17, 20);
+        BlockPos source = chest(h, 35, 20);
+        BlockPos outside = chest(h, 45, 20);
+        var target = HelperContainers.containerAt(h.getLevel(), store);
+        target.setItem(0, new ItemStack(Items.COAL, 60));
+        HelperContainers.containerAt(h.getLevel(), inner).setItem(0, new ItemStack(Items.IRON_INGOT, 3));
+        HelperContainers.containerAt(h.getLevel(), source).setItem(0, new ItemStack(Items.COAL, 20));
+        HelperContainers.containerAt(h.getLevel(), source).setItem(1, new ItemStack(Items.STONE, 64));
+        HelperContainers.containerAt(h.getLevel(), outside).setItem(0, new ItemStack(Items.DIAMOND, 7));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), source).isEmpty() && helper.getCargo().isEmpty(), "Keeper did not complete physical source-to-warehouse trips: " + state(h, helper));
+            h.assertTrue(target.countItem(Items.COAL) == 80 && target.getItem(0).getCount() == 64, "Did not prefer matching resource or top up partial stack first");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), empty).countItem(Items.STONE) == 64, "New resource did not go to empty chest");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), inner).countItem(Items.IRON_INGOT) == 3, "Drained a chest inside warehouse's 16-block zone");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), outside).countItem(Items.DIAMOND) == 7, "Took resources outside movement radius");
+            h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10 && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Personal kit was mixed into cargo");
+            helper.discard();
+        });
+    }
+
+    private static void keeperPartialStacks(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(32);
+        BlockPos first = warehouse(h, helper);
+        BlockPos later = chest(h, 10, 20);
+        var target = HelperContainers.containerAt(h.getLevel(), first);
+        var donor = HelperContainers.containerAt(h.getLevel(), later);
+        target.setItem(0, new ItemStack(Items.COAL, 20));
+        donor.setItem(0, new ItemStack(Items.COAL, 15));
+        donor.setItem(5, new ItemStack(Items.COAL, 15));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(target.countItem(Items.COAL) == 50 && donor.isEmpty() && helper.getCargo().isEmpty(), "Partial stacks were not merged within and between chests");
+            helper.discard();
+        });
+    }
+
+    private static void keeperFullStorage(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var target = HelperContainers.containerAt(h.getLevel(), store);
+        for (int slot = 0; slot < target.getContainerSize(); slot++) target.setItem(slot, new ItemStack(Items.COAL, 64));
+        BlockPos source = chest(h, 35, 20);
+        HelperContainers.containerAt(h.getLevel(), source).setItem(0, new ItemStack(Items.COAL, 12));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.runAfterDelay(100, () -> {
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), source).countItem(Items.COAL) == 12 && helper.getCargo().isEmpty(), "Took cargo with no destination space");
+            h.assertTrue(target.countItem(Items.COAL) == 27 * 64, "Full warehouse lost or duplicated resources");
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    private static void cargoSaveAndCancel(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        BlockPos store = warehouse(h, helper);
+        helper.getCargo().setItem(0, new ItemStack(Items.DIAMOND, 12));
+        var saved = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, h.getLevel().registryAccess());
+        helper.saveWithoutId(saved);
+        var restored = NpcHelperMod.HELPER.get().create(h.getLevel(), net.minecraft.world.entity.EntitySpawnReason.LOAD);
+        restored.load(TagValueInput.create(ProblemReporter.DISCARDING, h.getLevel().registryAccess(), saved.buildResult()));
+        h.assertTrue(restored.getCargo().countItem(Items.DIAMOND) == 12, "Cargo was lost on save/load");
+        helper.setProfession(HelperProfession.NONE);
+        h.assertTrue(helper.queue().current().type().equals(HelperStep.KEEPER_DELIVER), "Changing profession lost undelivered cargo");
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.getCargo().isEmpty() && HelperContainers.containerAt(h.getLevel(), store).countItem(Items.DIAMOND) == 12, "Cancelled delivery lost cargo");
+            helper.discard();
+        });
+    }
+
+    private static void storageStackLimits(final GameTestHelper h) {
+        SimpleContainer bag = new SimpleContainer(4);
+        bag.setItem(1, new ItemStack(Items.IRON_INGOT, 60));
+        h.assertTrue(HelperContainers.put(bag, new ItemStack(Items.IRON_INGOT, 8)).isEmpty(), "Cannot insert test stack");
+        h.assertTrue(bag.getItem(1).getCount() == 64 && bag.getItem(0).getCount() == 4, "Used empty slot before topping up existing stack");
+        SimpleContainer pearls = new SimpleContainer(4);
+        pearls.setItem(0, new ItemStack(Items.ENDER_PEARL, 15));
+        pearls.setItem(1, new ItemStack(Items.ENDER_PEARL, 15));
+        ItemStack named = new ItemStack(Items.ENDER_PEARL, 5);
+        named.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME, net.minecraft.network.chat.Component.literal("Reserved"));
+        pearls.setItem(2, named);
+        HelperContainers.compact(pearls);
+        h.assertTrue(pearls.getItem(0).getCount() == 16 && pearls.getItem(1).getCount() == 14 && pearls.getItem(2).getCount() == 5, "Compaction exceeded limits or mixed components");
+        h.succeed();
+    }
+
+    private static void doubleChestInventory(final GameTestHelper h) {
+        var left = Blocks.CHEST.defaultBlockState().setValue(net.minecraft.world.level.block.ChestBlock.FACING, net.minecraft.core.Direction.NORTH)
+                .setValue(net.minecraft.world.level.block.ChestBlock.TYPE, net.minecraft.world.level.block.state.properties.ChestType.LEFT);
+        var right = left.setValue(net.minecraft.world.level.block.ChestBlock.TYPE, net.minecraft.world.level.block.state.properties.ChestType.RIGHT);
+        BlockPos first = h.absolutePos(new BlockPos(20, 1, 20));
+        BlockPos second = first.relative(net.minecraft.world.level.block.ChestBlock.getConnectedDirection(left));
+        h.getLevel().setBlock(first, left, 2);
+        h.getLevel().setBlock(second, right, 2);
+        var container = HelperContainers.containerAt(h.getLevel(), first);
+        h.assertTrue(container != null && container.getContainerSize() == 54, "Double chest was not viewed as one inventory");
+        container.setItem(0, new ItemStack(Items.COAL, 20));
+        container.setItem(27, new ItemStack(Items.COAL, 30));
+        h.assertTrue(HelperContainers.around(h.getLevel(), first, 4).size() == 1, "Scanned both halves as independent stores");
+        HelperContainers.compact(container);
+        h.assertTrue(container.countItem(Items.COAL) == 50 && container.getItem(0).getCount() == 50, "Double chest compaction changed total resources");
+        h.succeed();
+    }
+
+    private static void warehouseSoilPriority(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.setRoamRadius(32);
+        helper.getBag().addItem(new ItemStack(Items.CRAFTING_TABLE));
+        BlockPos store = warehouse(h, helper);
+        BlockPos nearby = chest(h, 23, 20);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.DIRT, 10));
+        HelperContainers.containerAt(h.getLevel(), nearby).setItem(0, new ItemStack(Items.DIRT, 10));
+        helper.queue().set(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10, "Did not fetch common soil reserve");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), store).countItem(Items.DIRT) == 0, "Did not prefer warehouse soil");
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), nearby).countItem(Items.DIRT) == 10, "Took local soil before warehouse stock");
+            helper.discard();
+        });
+    }
+
+    private static void readyToolPriority(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(32);
+        BlockPos store = warehouse(h, helper);
+        BlockPos nearby = chest(h, 23, 20);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.IRON_AXE));
+        HelperContainers.containerAt(h.getLevel(), nearby).setItem(0, new ItemStack(Items.DIAMOND_AXE));
+        h.assertTrue(HelperTrades.prepareAxe(helper).getFirst().item().equals("minecraft:iron_axe"), "Area tool took precedence over marked warehouse");
+        helper.getBag().addItem(new ItemStack(Items.WOODEN_AXE));
+        var plan = HelperTrades.prepareAxe(helper);
+        h.assertTrue(plan.size() == 1 && plan.getFirst().type().equals(HelperStep.EQUIP)
+                && plan.getFirst().item().equals("minecraft:wooden_axe"), "Ignored an already carried profession tool");
+        helper.discard();
+        h.succeed();
+    }
+
+    private static void sequentialProfessionTools(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(32);
+        BlockPos store = warehouse(h, helper);
+        var stock = HelperContainers.containerAt(h.getLevel(), store);
+        stock.setItem(0, new ItemStack(Items.OAK_PLANKS, 4));
+        stock.setItem(1, new ItemStack(Items.STICK, 4));
+        helper.setProfession(HelperProfession.MINER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(!HelperToolkit.best(helper, HelperToolkit.Tool.PICKAXE).isEmpty()
+                    && !HelperToolkit.best(helper, HelperToolkit.Tool.SHOVEL).isEmpty(), "Did not prepare all required tools sequentially: " + state(h, helper));
+            h.assertTrue(stock.countItem(Items.OAK_PLANKS) == 0 && stock.countItem(Items.STICK) == 0, "Crafting did not use exact shared ingredients");
+            helper.discard();
+        });
+    }
+
+    private static void markNightHome(final GameTestHelper h, final NpcHelperEntity helper, final boolean iron) {
+        // Structure preparation can consume most of the night before the test body starts.
+        var clock = h.getLevel().registryAccess().getOrThrow(net.minecraft.world.clock.WorldClocks.OVERWORLD);
+        h.getLevel().getServer().clockManager().setTotalTicks(clock, 18000);
+        house(h);
+        if (iron) {
+            var state = Blocks.IRON_DOOR.defaultBlockState().setValue(net.minecraft.world.level.block.DoorBlock.FACING, net.minecraft.core.Direction.EAST);
+            h.setBlock(new BlockPos(26, 1, 20), state);
+            h.setBlock(new BlockPos(26, 2, 20), state.setValue(net.minecraft.world.level.block.DoorBlock.HALF, net.minecraft.world.level.block.state.properties.DoubleBlockHalf.UPPER));
+        }
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(30, 1, 20)), HelperSigns.Mark.HOME), "Cannot mark rescue destination");
+    }
+
+    private static void nightBlockedHomeRescue(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.setRoamRadius(4);
+        markNightHome(h, helper, true);
+        helper.setNoAi(false);
+        h.runAfterDelay(590, () -> h.assertTrue(!dev.npchelper.entity.HelperShelter.indoors(h.getLevel(), helper.blockPosition()), "Teleported before the 30-second timeout"));
+        h.succeedWhen(() -> {
+            h.assertTrue(dev.npchelper.entity.HelperShelter.indoors(h.getLevel(), helper.blockPosition()), "Did not rescue NPC past an unreachable home entrance: " + state(h, helper) + ",status=" + helper.nightGoal().status());
+            h.assertTrue(!h.getBlockState(new BlockPos(26, 1, 20)).getValue(net.minecraft.world.level.block.DoorBlock.OPEN), "Rescue changed the iron door");
+            helper.discard();
+        });
+    }
+
+    private static void nightWaterPitRescue(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getCargo().setItem(0, new ItemStack(Items.DIAMOND, 6));
+        markNightHome(h, helper, false);
+        for (int x = 17; x <= 23; x++) for (int z = 17; z <= 23; z++) for (int y = 1; y <= 5; y++) {
+            if (x == 17 || x == 23 || z == 17 || z == 23) h.setBlock(new BlockPos(x, y, z), Blocks.STONE);
+            else if (y <= 3) h.setBlock(new BlockPos(x, y, z), Blocks.WATER);
+        }
+        BlockPos water = h.absolutePos(new BlockPos(20, 2, 20));
+        helper.teleportTo(water.getX() + 0.5D, water.getY(), water.getZ() + 0.5D);
+        helper.setMode(HelperMode.STAY);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.isAlive() && dev.npchelper.entity.HelperShelter.indoors(h.getLevel(), helper.blockPosition()), "NPC remained trapped in water instead of reaching shelter: " + state(h, helper));
+            h.assertTrue(helper.getCargo().countItem(Items.DIAMOND) == 6 && helper.getBag().countItem(Items.DIRT) == 10
+                    && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Rescue lost cargo or personal kit");
+            h.assertTrue(h.getLevel().getFluidState(helper.blockPosition()).isEmpty(), "Rescue chose another water cell");
+            helper.discard();
+        });
+    }
+
+    private static void expeditionNoRescue(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.setRoamRadius(4);
+        markNightHome(h, helper, true);
+        helper.setExpedition(true);
+        var origin = helper.position();
+        helper.setNoAi(false);
+        h.runAfterDelay(700, () -> {
+            h.assertTrue(!dev.npchelper.entity.HelperShelter.indoors(h.getLevel(), helper.blockPosition())
+                    && helper.position().distanceToSqr(origin) <= 16, "Expedition mode performed a night rescue");
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    private static void unsafeRescuePositions(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        BlockPos candidate = helper.blockPosition().east(4);
+        h.getLevel().setBlockAndUpdate(candidate, Blocks.WATER.defaultBlockState());
+        h.assertTrue(!dev.npchelper.entity.HelperShelter.safeTeleport(helper, candidate), "Accepted water as a rescue target");
+        h.getLevel().setBlockAndUpdate(candidate, Blocks.STONE.defaultBlockState());
+        h.assertTrue(!dev.npchelper.entity.HelperShelter.safeTeleport(helper, candidate), "Accepted a solid block as a rescue target");
+        h.getLevel().setBlockAndUpdate(candidate, Blocks.AIR.defaultBlockState());
+        h.getLevel().setBlockAndUpdate(candidate.below(), Blocks.MAGMA_BLOCK.defaultBlockState());
+        h.assertTrue(!dev.npchelper.entity.HelperShelter.safeTeleport(helper, candidate), "Accepted damaging floor as a rescue target");
+        helper.discard();
+        h.succeed();
+    }
+
+    private static void inventoryMaterialsBeforeStock(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.getBag().addItem(new ItemStack(Items.OAK_PLANKS, 4));
+        BlockPos store = warehouse(h, helper);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.CRAFTING_TABLE));
+        var plan = dev.npchelper.work.HelperResources.plan(helper, Items.CRAFTING_TABLE, 1);
+        h.assertTrue(!plan.refused() && plan.steps().size() == 1 && plan.steps().getFirst().type().equals(HelperStep.CRAFT),
+                "Warehouse stock took precedence over sufficient owned crafting materials");
+        h.assertTrue(helper.getBag().countItem(Items.OAK_PLANKS) == 4 && HelperContainers.containerAt(h.getLevel(), store).countItem(Items.CRAFTING_TABLE) == 1,
+                "Planning mutated inventories");
+        helper.discard();
+        h.succeed();
+    }
+
+    private static void unreachableWarehouseFallback(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(4);
+        for (BlockPos sign : HelperSigns.around(h.getLevel(), helper.blockPosition(), 64, HelperSigns.Mark.STORE)) h.getLevel().removeBlock(sign, false);
+        BlockPos store = warehouse(h, helper);
+        for (int z = 0; z < 48; z++) for (int y = 1; y <= 3; y++) h.setBlock(new BlockPos(12, y, z), Blocks.STONE);
+        BlockPos local = chest(h, 23, 20);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.IRON_AXE));
+        HelperContainers.containerAt(h.getLevel(), local).setItem(0, new ItemStack(Items.STONE_AXE));
+        var plan = HelperTrades.prepareAxe(helper);
+        h.assertTrue(!plan.isEmpty() && plan.getFirst().type().equals(HelperStep.FETCH)
+                && plan.getFirst().item().equals("minecraft:stone_axe"), "Unreachable warehouse prevented use of reachable area stock");
+        helper.discard();
+        h.succeed();
+    }
+
+    private static void keeperAcrossFullRadius(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        BlockPos centre = h.absolutePos(new BlockPos(80, 1, 20));
+        helper.teleportTo(centre.getX() + 0.5D, centre.getY(), centre.getZ() + 0.5D);
+        helper.setMode(HelperMode.STAY);
+        helper.setRoamRadius(64);
+        BlockPos store = chest(h, 20, 20);
+        BlockPos source = chest(h, 140, 20);
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(18, 1, 20)), HelperSigns.Mark.STORE), "Cannot mark far warehouse");
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.COAL, 60));
+        HelperContainers.containerAt(h.getLevel(), source).setItem(0, new ItemStack(Items.COAL, 8));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), store).countItem(Items.COAL) == 68
+                    && HelperContainers.containerAt(h.getLevel(), source).isEmpty() && helper.getCargo().isEmpty(),
+                    "Cannot carry across opposite sides of the 64-block movement area: " + state(h, helper));
+            helper.discard();
+        });
     }
 
     private static void movementAndMenu(final GameTestHelper h) {

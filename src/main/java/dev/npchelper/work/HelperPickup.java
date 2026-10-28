@@ -64,6 +64,11 @@ public final class HelperPickup {
         }
     }
 
+    public boolean hasPendingItem(final net.minecraft.world.item.Item wanted) {
+        if (!(helper.level() instanceof ServerLevel level)) return false;
+        return pending.stream().anyMatch(id -> level.getEntity(id) instanceof ItemEntity item && item.isAlive() && item.getItem().is(wanted));
+    }
+
     public boolean hasPending() {
         return !pending.isEmpty();
     }

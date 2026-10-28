@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:night_blocked_home_rescue",
+  "environment": "npchelper:night_rescue",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 900
+}

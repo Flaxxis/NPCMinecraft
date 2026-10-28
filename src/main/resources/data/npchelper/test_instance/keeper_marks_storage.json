@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:keeper_marks_storage",
+  "environment": "npchelper:keeper_isolated",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 1000
+}

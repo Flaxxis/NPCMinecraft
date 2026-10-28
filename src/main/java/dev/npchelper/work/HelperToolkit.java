@@ -16,9 +16,9 @@ public final class HelperToolkit {
 
     /** A kind of tool, worst material first, so the last match found is the best one. */
     public enum Tool {
-        AXE(Items.WOODEN_AXE, Items.STONE_AXE, Items.IRON_AXE),
-        PICKAXE(Items.WOODEN_PICKAXE, Items.STONE_PICKAXE, Items.IRON_PICKAXE),
-        SHOVEL(Items.WOODEN_SHOVEL, Items.STONE_SHOVEL, Items.IRON_SHOVEL);
+        AXE(Items.WOODEN_AXE, Items.GOLDEN_AXE, Items.STONE_AXE, Items.COPPER_AXE, Items.IRON_AXE, Items.DIAMOND_AXE, Items.NETHERITE_AXE),
+        PICKAXE(Items.WOODEN_PICKAXE, Items.GOLDEN_PICKAXE, Items.STONE_PICKAXE, Items.COPPER_PICKAXE, Items.IRON_PICKAXE, Items.DIAMOND_PICKAXE, Items.NETHERITE_PICKAXE),
+        SHOVEL(Items.WOODEN_SHOVEL, Items.GOLDEN_SHOVEL, Items.STONE_SHOVEL, Items.COPPER_SHOVEL, Items.IRON_SHOVEL, Items.DIAMOND_SHOVEL, Items.NETHERITE_SHOVEL);
 
         private final List<Item> byQuality;
 
@@ -57,6 +57,7 @@ public final class HelperToolkit {
         ItemStack best = ItemStack.EMPTY;
         List<ItemStack> carried = new ArrayList<>();
         carried.add(helper.getMainHandItem());
+        carried.add(helper.getOffhandItem());
         for (int slot = 0; slot < helper.getBag().getContainerSize(); slot++) carried.add(helper.getBag().getItem(slot));
         for (ItemStack stack : carried) {
             if (tool.quality(stack) > tool.quality(best)) best = stack;
