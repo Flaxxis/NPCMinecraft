@@ -22,8 +22,10 @@ public final class HelperKeeper {
     public static final int WAREHOUSE_RADIUS = 16;
     /** Something on the ground is left this long before it counts as lying about rather than just dropped. */
     private static final int SETTLE_AGE = 20 * 10;
-    /** Another helper's harvest that has lain this long has plainly been given up on. */
-    private static final int ABANDONED_AGE = 20 * 120;
+    /** Free bag slots below which a round of gathering stops for a walk to the warehouse. */
+    private static final int BAG_MARGIN = 2;
+    /** How long each turn lasts before the other gets its go: gathering off the ground, then tending the chests. */
+    private static final int GATHER_TURN = 20 * 30, CHEST_TURN = 20 * 30;
     /** An item it could not get to is left alone this long before it is tried again. */
     private static final int LOOSE_RETRY_TICKS = 20 * 30;
 
@@ -33,6 +35,11 @@ public final class HelperKeeper {
     private double bestLooseDistance;
     private long looseProgress;
     private final Map<UUID, Long> looseRetryAfter = new HashMap<>();
+    /** Whose turn it is, and when it is up; -1 until the first turn starts. */
+    private boolean gathering = true;
+    private long turnEnds = -1;
+    /** The last gathering round found nothing lying about. */
+    private boolean groundClear;
     private @Nullable BlockPos warehouse;
     private @Nullable BlockPos walkTarget;
     private final Map<BlockPos, Long> retryAfter = new HashMap<>();
@@ -53,6 +60,9 @@ public final class HelperKeeper {
         looseTarget = null;
         chasedLoose = null;
         looseRetryAfter.clear();
+        gathering = true;
+        turnEnds = -1;
+        groundClear = false;
     }
 
     private void enableNavigation() {
@@ -203,6 +213,8 @@ public final class HelperKeeper {
         var centre = helper.centre();
         if (centre == null) return false;
 
+        // A nearly full bag goes to the warehouse first; the round resumes afterwards.
+        if (freeSlots() < BAG_MARGIN) return false;
         if (looseTarget != null && (!looseTarget.isAlive() || !worthTaking(level, looseTarget, stores))) looseTarget = null;
         if (looseTarget == null) looseTarget = nearestLoose(level, centre, stores);
         if (looseTarget == null) return false;
@@ -210,14 +222,16 @@ public final class HelperKeeper {
         ItemEntity item = looseTarget;
         if (touches(item)) {
             helper.getNavigation().stop();
-            ItemStack lying = item.getItem();
-            int amount = Math.min(lying.getCount(), lying.getMaxStackSize());
-            helper.getCargo().setItem(0, lying.copyWithCount(amount));
-            if (amount >= lying.getCount()) item.discard();
-            else item.setItem(lying.copyWithCount(lying.getCount() - amount));
-            level.playSound(null, helper.blockPosition(), net.minecraft.sounds.SoundEvents.ITEM_PICKUP,
-                    net.minecraft.sounds.SoundSource.NEUTRAL, 0.2F, 1.1F);
-            helper.queue().noteProgress();
+            // Into the bag, so one round picks up a good many things before the walk to the warehouse.
+            ItemStack lying = item.getItem().copy();
+            ItemStack left = helper.getBag().addItem(lying);
+            if (left.getCount() < item.getItem().getCount()) {
+                if (left.isEmpty()) item.discard();
+                else item.setItem(left);
+                level.playSound(null, helper.blockPosition(), net.minecraft.sounds.SoundEvents.ITEM_PICKUP,
+                        net.minecraft.sounds.SoundSource.NEUTRAL, 0.2F, 1.1F);
+                helper.queue().noteProgress();
+            }
             looseTarget = null;
             return true;
         }
@@ -266,14 +280,73 @@ public final class HelperKeeper {
         return best;
     }
 
+    /**
+     * Anything that has lain ten seconds is fair game — another helper's harvest included, since it ends up in the warehouse
+     * either way. Only what is burning or in lava is let go: it is gone already, and walking in after it is how a helper dies.
+     * Whether the warehouse has room does not matter: in the bag nothing despawns, on the ground everything does.
+     */
     private boolean worthTaking(final ServerLevel level, final ItemEntity item, final List<BlockPos> stores) {
         if (!item.isAlive() || item.hasPickUpDelay() || item.getAge() < SETTLE_AGE) return false;
         if (looseRetryAfter.containsKey(item.getUUID())) return false;
-        // Burning or in lava: it is going anyway, and walking in after it is how a helper dies.
-        if (item.isInLava() || item.isOnFire()) return false;
-        // Another helper's harvest is that helper's, until it has lain long enough to be plainly forgotten.
-        if (HelperPickup.claimedByAnother(item, helper) && item.getAge() < ABANDONED_AGE) return false;
-        return destination(level, stores, item.getItem()) != null;
+        return !item.isInLava() && !item.isOnFire();
+    }
+
+    /**
+     * Carries what it has gathered into the warehouse, one chest at a time. Its own kit — the dirt for a pillar and one
+     * bench — stays in the bag; everything over that goes in. True while there is still something to take there.
+     */
+    private boolean unloadBag(final ServerLevel level, final List<BlockPos> stores) {
+        var bag = helper.getBag();
+        int dirtToKeep = HelperSupports.CARRY;
+        int benchesToKeep = 1;
+        boolean nowhere = false;
+
+        for (int slot = 0; slot < bag.getContainerSize(); slot++) {
+            ItemStack stack = bag.getItem(slot);
+            if (stack.isEmpty()) continue;
+
+            int keep = 0;
+            if (stack.is(net.minecraft.tags.ItemTags.DIRT)) {
+                keep = Math.min(stack.getCount(), dirtToKeep);
+                dirtToKeep -= keep;
+            } else if (stack.is(Items.CRAFTING_TABLE)) {
+                keep = Math.min(stack.getCount(), benchesToKeep);
+                benchesToKeep -= keep;
+            }
+            int spare = stack.getCount() - keep;
+            if (spare <= 0) continue;
+
+            ItemStack load = stack.copyWithCount(spare);
+            BlockPos target = destination(level, stores, load);
+            if (target == null) {
+                nowhere = true;
+                continue;
+            }
+            if (!walk(level, target)) return true;
+
+            Container container = HelperContainers.containerAt(level, target);
+            if (container == null) return true;
+            ItemStack left = HelperContainers.put(container, load);
+            int moved = spare - left.getCount();
+            if (moved > 0) {
+                stack.shrink(moved);
+                bag.setChanged();
+                helper.queue().noteProgress();
+            }
+            return true;
+        }
+        // Kept, not dropped: in the bag it lasts, and the warehouse may have room again later.
+        if (nowhere) problem = "Склад повний: тримаю зібране в сумці";
+        return false;
+    }
+
+    private int freeSlots() {
+        int free = 0;
+        var bag = helper.getBag();
+        for (int slot = 0; slot < bag.getContainerSize(); slot++) {
+            if (bag.getItem(slot).isEmpty()) free++;
+        }
+        return free;
     }
 
     /** The player's own reach: the body widened by a block sideways and half a block up and down. */
@@ -293,15 +366,43 @@ public final class HelperKeeper {
         }
     }
 
-    /** True means this sweep has no remaining reachable transfer or compaction. */
+    /**
+     * True means there is nothing left to do: no chest work and nothing lying about.
+     *
+     * The keeper takes turns: a round of gathering off the ground and carrying it in, then a turn at the chests, then the
+     * ground again. In a lived-in settlement something always lies about, so gathering first and always would mean the
+     * chests were never tended; tending the chests first and always would leave the ground to despawn. A walk or a chase
+     * under way is finished before the turn changes, so a long trip is never turned back halfway.
+     */
     public boolean tick(final ServerLevel level) {
         enableNavigation();
         problem = "";
+        // Something in hand is always delivered first, whichever turn it is.
         if (!helper.getCargo().isEmpty()) { deliver(level); return false; }
         if (findWarehouse(level) == null) { prepare(level); return false; }
         List<BlockPos> stores = warehouseChests(level);
-        // Things lying on the ground come first: left there, they are gone in five minutes.
-        if (sweepGround(level, stores)) return false;
+        long now = level.getGameTime();
+        if (turnEnds < 0) turnEnds = now + GATHER_TURN;
+
+        if (gathering) {
+            boolean busy = sweepGround(level, stores);
+            if (busy && (now < turnEnds || looseTarget != null)) return false;
+            // What was gathered goes in, all in one walk rather than a walk per item.
+            if (unloadBag(level, stores)) return false;
+            groundClear = !busy;
+            gathering = false;
+            turnEnds = now + CHEST_TURN;
+        }
+
+        boolean chestIdle = tendChests(level, stores);
+        if (!chestIdle && (now < turnEnds || walkTarget != null)) return false;
+        gathering = true;
+        turnEnds = now + GATHER_TURN;
+        return chestIdle && groundClear;
+    }
+
+    /** One step of the work at the chests. True means none is left. */
+    private boolean tendChests(final ServerLevel level, final List<BlockPos> stores) {
         var scanned = new LinkedHashSet<>(stores);
         if (helper.centre() != null) scanned.addAll(HelperContainers.around(level, BlockPos.containing(helper.centre()), helper.workRadius()));
         // Merge duplicate slots within every inspected chest, while actually standing beside it.

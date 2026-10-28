@@ -194,11 +194,6 @@ public final class HelperPickup {
                 .intersects(item.getBoundingBox());
     }
 
-    /** Marked as the harvest of some other helper, who will be back for it. */
-    public static boolean claimedByAnother(final ItemEntity item, final NpcHelperEntity helper) {
-        return item.getPersistentData().read(HARVESTER, UUIDUtil.CODEC).filter(id -> !id.equals(helper.getUUID())).isPresent();
-    }
-
     /**
      * Takes an interest in loose drops around a spot that nobody has claimed — what a felled tree sheds while its leaves
      * decay on their own. Anything a player or another helper threw down has a thrower or a mark on it and is left alone.

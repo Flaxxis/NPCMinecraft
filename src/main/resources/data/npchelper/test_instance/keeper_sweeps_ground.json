@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:keeper_sweeps_ground",
+  "environment": "minecraft:default",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 3600
+}

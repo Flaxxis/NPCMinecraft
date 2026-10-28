@@ -44,6 +44,7 @@ public final class HelperRegressionTests {
         tests.register("soil_under_grass", () -> HelperRegressionTests::soilUnderGrass);
         tests.register("tall_tree_steps", () -> HelperRegressionTests::tallTreeSteps);
         tests.register("second_tall_tree", () -> HelperRegressionTests::secondTallTree);
+        tests.register("keeper_sweeps_ground", () -> HelperRegressionTests::keeperSweepsGround);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
         tests.register("pickup_full_bag", () -> HelperRegressionTests::pickupFullBag);
@@ -938,6 +939,48 @@ public final class HelperRegressionTests {
             h.assertTrue(HelperContainers.containerAt(h.getLevel(), outside).countItem(Items.DIAMOND) == 7, "Took resources outside movement radius");
             h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10 && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Personal kit was mixed into cargo");
             helper.discard();
+        });
+    }
+
+    /**
+     * Whatever has lain ten seconds goes to the warehouse in one round, another helper's harvest included, while the
+     * keeper's own kit stays in its bag (game 28.10: the keeper stood about while things lay on the ground).
+     */
+    private static void keeperSweepsGround(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        List<BlockPos> chests = new java.util.ArrayList<>(List.of(store));
+        for (int z : new int[] {16, 18, 22, 24, 26}) chests.add(chest(h, 5, z));
+
+        var level = h.getLevel();
+        java.util.function.BiConsumer<ItemStack, BlockPos> lay = (stack, at) -> {
+            var pos = h.absoluteVec(net.minecraft.world.phys.Vec3.atBottomCenterOf(at));
+            level.addFreshEntity(new net.minecraft.world.entity.item.ItemEntity(level, pos.x, pos.y, pos.z, stack));
+        };
+        lay.accept(new ItemStack(Items.COBBLESTONE, 32), new BlockPos(14, 1, 22));
+        lay.accept(new ItemStack(Items.APPLE, 3), new BlockPos(24, 1, 18));
+        lay.accept(new ItemStack(Items.STRING, 5), new BlockPos(26, 1, 24));
+        lay.accept(new ItemStack(Items.DIRT, 4), new BlockPos(22, 1, 14));
+        // Another helper's harvest, left lying.
+        NpcHelperEntity other = h.spawn(NpcHelperMod.HELPER.get(), new BlockPos(30, 1, 30));
+        other.setNoAi(true);
+        other.pickup().drop(h.absolutePos(new BlockPos(18, 1, 26)), List.of(new ItemStack(Items.OAK_LOG, 10)));
+
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            java.util.function.ToIntFunction<net.minecraft.world.item.Item> stored = item -> chests.stream()
+                    .mapToInt(pos -> HelperContainers.containerAt(level, pos).countItem(item)).sum();
+            h.assertTrue(stored.applyAsInt(Items.COBBLESTONE) == 32 && stored.applyAsInt(Items.APPLE) == 3
+                    && stored.applyAsInt(Items.STRING) == 5, "Loose items were not carried to the warehouse: " + state(h, helper));
+            h.assertTrue(stored.applyAsInt(Items.OAK_LOG) == 10, "Another helper's abandoned harvest was left lying");
+            h.assertTrue(stored.applyAsInt(Items.DIRT) == 4, "Dirt beyond the keeper's own kit was not stored");
+            h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10 && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1
+                    && helper.getBag().countItem(Items.COBBLESTONE) == 0, "Kit was stored, or loot was kept back");
+            helper.discard();
+            other.discard();
         });
     }
 
