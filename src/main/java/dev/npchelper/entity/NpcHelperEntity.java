@@ -56,6 +56,16 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private static final int RETREAT_TICKS = 20 * 10;
     /** Never fall further than this of its own accord. */
     private static final int MAX_FALL = 2;
+    /** Getting out of a trap may cost a heart or two of a fall, but no more. */
+    private static final int ESCAPE_FALL = 6;
+    /** Ten seconds rooted to the spot with nothing to explain it. */
+    private static final int STUCK_TICKS = 20 * 10;
+    /** Shuffling on the spot is still standing still. */
+    private static final double STILL_MARGIN = 0.5D;
+
+    private @Nullable Vec3 stillAt;
+    private int stillTicks;
+    private boolean escaping;
     /** A breath between one job and the next, so a trade is a working day rather than a treadmill. */
     private static final int REST_TICKS = 20 * 15;
 
@@ -136,10 +146,41 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
                 .add(Attributes.FOLLOW_RANGE, 32.0D);
     }
 
-    /** A drop longer than a couple of blocks is never part of a planned route. */
+    /** A drop longer than a couple of blocks is never part of a planned route — unless that is the only way out. */
     @Override
     public int getMaxFallDistance() {
-        return MAX_FALL;
+        return escaping ? ESCAPE_FALL : MAX_FALL;
+    }
+
+    /**
+     * Stuck: ten seconds without moving although nothing explains it — not fighting, not breaking a block, not climbing its
+     * own pillar, and not resting for the night. Standing still for a reason is never mistaken for being trapped.
+     */
+    public boolean isStuck() {
+        return stillTicks >= STUCK_TICKS;
+    }
+
+    public void clearStuck() {
+        stillTicks = 0;
+        stillAt = null;
+    }
+
+    public void setEscaping(final boolean escaping) {
+        this.escaping = escaping;
+    }
+
+    private void watchForStuck() {
+        Vec3 home = centre();
+        // Idle with nothing to do and already in place is resting, not being trapped.
+        boolean wantsToMove = getNavigation().isStuck() || !queue.isEmpty()
+                || home != null && position().distanceTo(home) > workRadius() + 2;
+        boolean explained = !wantsToMove || getTarget() != null || nightGoal.active() || breaking.target() != null || home == null;
+        if (explained || stillAt == null || position().distanceTo(stillAt) > STILL_MARGIN) {
+            stillAt = position();
+            stillTicks = 0;
+            return;
+        }
+        stillTicks++;
     }
 
     @Override
@@ -158,6 +199,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.1D, true));
         nightGoal = new HelperNightGoal(this);
         goalSelector.addGoal(2, nightGoal);
+        goalSelector.addGoal(2, new HelperUnstickGoal(this));
         goalSelector.addGoal(3, new dev.npchelper.work.HelperPickupGoal(this));
         workGoal = new dev.npchelper.work.HelperWorkGoal(this);
         goalSelector.addGoal(4, workGoal);
@@ -204,6 +246,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void customServerAiStep(final ServerLevel level) {
         super.customServerAiStep(level);
         if (retreatTicks > 0) retreatTicks--;
+        watchForStuck();
         pickup.tick();
         eating.tick();
         passages.tick();

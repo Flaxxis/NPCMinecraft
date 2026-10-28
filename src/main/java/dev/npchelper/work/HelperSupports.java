@@ -41,6 +41,11 @@ public final class HelperSupports {
         return placed.size();
     }
 
+    /** Whether the helper set this block itself, and so may take it away again. */
+    public boolean owns(final BlockPos pos) {
+        return placed.contains(pos);
+    }
+
     /** True when the spot is too high above the helper to be worked on from here. */
     public static boolean outOfReach(final NpcHelperEntity helper, final BlockPos target) {
         return target.getY() - helper.blockPosition().getY() > 2;
