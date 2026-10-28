@@ -16,7 +16,9 @@ import net.minecraftforge.network.PacketDistributor;
 
 /** The helper's interface: gear, bag, modes and a name box. Drawn rather than blitted, so it needs no texture of its own. */
 public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
-    private static final int WIDTH = 300, HEIGHT = 262;
+    private static final int WIDTH = 300, HEIGHT = 286;
+    /** Each control keeps its own band, so nothing is drawn over anything else. */
+    private static final int NAME_Y = 22, MODES_Y = 44, RANGE_Y = 68, TRADE_Y = 92, STATE_Y = 116;
 
     private static final int BORDER = 0xFF555F70;
     private static final int PANEL = 0xFF161C28;
@@ -41,23 +43,25 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         super.init();
         NpcHelperEntity helper = menu.helper();
 
-        nameBox = new EditBox(font, leftPos + HelperMenu.LEFT, topPos + 22, 276, 16, Component.literal("Ім'я"));
+        nameBox = new EditBox(font, leftPos + HelperMenu.LEFT, topPos + NAME_Y, 276, 16, Component.literal("Ім'я"));
         nameBox.setMaxLength(RenameHelper.MAX_LENGTH);
         nameBox.setValue(helper != null && helper.hasCustomName() ? helper.getCustomName().getString() : "");
         nameBox.setResponder(this::sendName);
         addRenderableWidget(nameBox);
 
-        int buttonsY = topPos + 44;
+        // Three rows, each clear of the next: how it moves, how far, and what it does.
+        int modesY = topPos + MODES_Y;
         roamButton = addRenderableWidget(Button.builder(Component.literal("Вільно"), b -> press(HelperMenu.BUTTON_ROAM))
-                .bounds(leftPos + HelperMenu.LEFT, buttonsY, 90, 20).build());
+                .bounds(leftPos + HelperMenu.LEFT, modesY, 90, 20).build());
         stayButton = addRenderableWidget(Button.builder(Component.literal("Стій тут"), b -> press(HelperMenu.BUTTON_STAY))
-                .bounds(leftPos + HelperMenu.LEFT + 93, buttonsY, 90, 20).build());
+                .bounds(leftPos + HelperMenu.LEFT + 93, modesY, 90, 20).build());
         followButton = addRenderableWidget(Button.builder(Component.literal("За мною"), b -> press(HelperMenu.BUTTON_FOLLOW))
-                .bounds(leftPos + HelperMenu.LEFT + 186, buttonsY, 90, 20).build());
+                .bounds(leftPos + HelperMenu.LEFT + 186, modesY, 90, 20).build());
+
         radiusButton = addRenderableWidget(Button.builder(radiusLabel(), b -> press(HelperMenu.BUTTON_RADIUS))
-                .bounds(leftPos + HelperMenu.LEFT + 150, topPos + HelperMenu.EQUIPMENT_Y - 22, 126, 18).build());
+                .bounds(leftPos + HelperMenu.LEFT, topPos + RANGE_Y, 276, 20).build());
         professionButton = addRenderableWidget(Button.builder(professionLabel(), b -> press(HelperMenu.BUTTON_PROFESSION))
-                .bounds(leftPos + HelperMenu.LEFT, buttonsY + 22, 276, 20).build());
+                .bounds(leftPos + HelperMenu.LEFT, topPos + TRADE_Y, 276, 20).build());
     }
 
     private void press(final int buttonId) {
@@ -118,7 +122,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
 
         NpcHelperEntity helper = menu.helper();
         if (helper == null) return;
-        graphics.text(font, Component.literal("Зараз: " + state(helper)), HelperMenu.LEFT, 68, ACTIVE, false);
+        graphics.text(font, Component.literal("Зараз: " + state(helper)), HelperMenu.LEFT, STATE_Y, ACTIVE, false);
     }
 
     @Override
@@ -131,7 +135,8 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         roamButton.active = helper.getMode() != HelperMode.ROAM;
         stayButton.active = helper.getMode() != HelperMode.STAY;
         followButton.active = helper.getMode() != HelperMode.FOLLOW;
-        radiusButton.active = helper.getMode() == HelperMode.ROAM;
+        // The range means the same in every mode now, so it is never greyed out.
+        radiusButton.active = true;
     }
 
     private static String state(final NpcHelperEntity helper) {

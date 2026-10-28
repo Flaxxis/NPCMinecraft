@@ -45,8 +45,8 @@ import org.jspecify.annotations.Nullable;
  */
 public final class NpcHelperEntity extends PathfinderMob implements OwnableEntity {
     public static final int BAG_SIZE = 27;
-    /** What the roaming radius steps through when the player clicks it. */
-    public static final int[] ROAM_RADII = {8, 16, 32, 48};
+    /** What the range steps through when the player clicks it. It means the same in every mode. */
+    public static final int[] ROAM_RADII = {4, 8, 16, 32, 64};
     /** Hostiles further than this are somebody else's problem. */
     public static final double GUARD_RANGE = 16.0D;
     /** A chase that strays this far from the centre is called off. */
@@ -259,13 +259,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         }
     }
 
-    /** How far from its centre the helper is willing to work: its own circle, and a short one while it stays put. */
+    /** How far from its centre the helper goes. The player's setting, the same in every mode but staying put. */
     public int workRadius() {
-        return switch (getMode()) {
-            case STAY -> HelperMode.STAY_RADIUS;
-            case FOLLOW -> HelperMode.FOLLOW_MAX;
-            case ROAM -> getRoamRadius();
-        };
+        int chosen = getRoamRadius();
+        return getMode() == HelperMode.STAY
+                ? Math.max(HelperMode.MIN_DISTANCE, (int) Math.round(chosen * HelperMode.STAY_SHARE))
+                : chosen;
     }
 
     /** Gear handed over by the player is never lost silently: it drops in full when the helper dies. */

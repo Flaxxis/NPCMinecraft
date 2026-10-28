@@ -26,7 +26,7 @@ public final class HelperMenu extends AbstractContainerMenu {
     private static final int HELPER_SLOTS = EQUIPMENT_COUNT + BAG_SIZE;
 
     /** Laid out by the screen, which draws a frame around each one. */
-    public static final int LEFT = 12, EQUIPMENT_Y = 88, BAG_Y = 116, PLAYER_Y = 180, HOTBAR_Y = 238;
+    public static final int LEFT = 12, EQUIPMENT_Y = 112, BAG_Y = 140, PLAYER_Y = 204, HOTBAR_Y = 262;
 
     private final @Nullable NpcHelperEntity helper;
     private final Container bag;

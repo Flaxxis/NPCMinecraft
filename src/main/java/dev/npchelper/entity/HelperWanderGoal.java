@@ -54,9 +54,9 @@ public final class HelperWanderGoal extends Goal {
 
         for (int attempt = 0; attempt < 10; attempt++) {
             double angle = helper.getRandom().nextDouble() * Math.PI * 2.0D;
-            double distance = followsOwner()
-                    ? HelperMode.FOLLOW_MIN + helper.getRandom().nextDouble() * (HelperMode.FOLLOW_MAX - HelperMode.FOLLOW_MIN)
-                    : helper.getRandom().nextDouble() * radius;
+            // Never right on top of the centre, and never past the range the player set.
+            double near = Math.min(HelperMode.MIN_DISTANCE, radius);
+            double distance = near + helper.getRandom().nextDouble() * Math.max(0.0D, radius - near);
             double x = centre.x + Math.cos(angle) * distance;
             double z = centre.z + Math.sin(angle) * distance;
             if (helper.getNavigation().moveTo(x, centre.y, z, SPEED)) return;
@@ -67,9 +67,9 @@ public final class HelperWanderGoal extends Goal {
         return helper.getMode() == HelperMode.FOLLOW || helper.isRetreating();
     }
 
+    /** One setting, whichever mode it is in: the range the player chose. */
     private double radius() {
-        if (followsOwner()) return HelperMode.FOLLOW_MAX;
-        return helper.getMode() == HelperMode.STAY ? HelperMode.STAY_RADIUS : helper.getRoamRadius();
+        return helper.workRadius();
     }
 
     /** Standing room only: never inside a block and never on top of something that hurts. */
