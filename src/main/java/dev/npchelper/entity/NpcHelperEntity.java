@@ -68,6 +68,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
             NpcHelperEntity.class, EntityDataSerializers.INT);
 
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
+    private final dev.npchelper.work.HelperPickup pickup = new dev.npchelper.work.HelperPickup(this);
+    private final dev.npchelper.work.HelperBreaking breaking = new dev.npchelper.work.HelperBreaking(this, pickup);
     /** The spot the helper keeps to in every mode but FOLLOW. */
     private BlockPos anchor = BlockPos.ZERO;
     /** While this has not run out, the helper keeps to the owner whatever its mode says. */
@@ -116,6 +118,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
         goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.1D, true));
+        goalSelector.addGoal(4, new dev.npchelper.work.HelperPickupGoal(this));
         goalSelector.addGoal(5, new HelperWanderGoal(this));
         goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
         goalSelector.addGoal(7, new RandomLookAroundGoal(this));
@@ -154,6 +157,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void customServerAiStep(final ServerLevel level) {
         super.customServerAiStep(level);
         if (retreatTicks > 0) retreatTicks--;
+        pickup.tick();
 
         LivingEntity target = getTarget();
         if (target == null) return;
@@ -184,6 +188,14 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
     public SimpleContainer getBag() {
         return bag;
+    }
+
+    public dev.npchelper.work.HelperPickup pickup() {
+        return pickup;
+    }
+
+    public dev.npchelper.work.HelperBreaking breaking() {
+        return breaking;
     }
 
     /** Gear handed over by the player is never lost silently: it drops in full when the helper dies. */

@@ -26,14 +26,16 @@ public final class HelperBreaking {
     private static final float WITH_TOOL = 30.0F, BARE = 100.0F;
 
     private final NpcHelperEntity helper;
+    private final HelperPickup pickup;
     private @Nullable BlockPos target;
     private @Nullable BlockState state;
     private ItemStack tool = ItemStack.EMPTY;
     private int ticks;
     private long lastTick = Long.MIN_VALUE;
 
-    public HelperBreaking(final NpcHelperEntity helper) {
+    public HelperBreaking(final NpcHelperEntity helper, final HelperPickup pickup) {
         this.helper = helper;
+        this.pickup = pickup;
     }
 
     public @Nullable BlockPos target() {
@@ -84,11 +86,10 @@ public final class HelperBreaking {
         level.destroyBlockProgress(helper.getId(), pos, Math.min(9, ticks * 10 / duration));
         if (ticks < duration) return false;
 
-        for (ItemStack drop : Block.getDrops(current, level, pos, level.getBlockEntity(pos), helper, hand)) {
-            ItemStack left = helper.getBag().addItem(drop);
-            if (!left.isEmpty()) helper.spawnAtLocation(level, left);
-        }
+        // What it breaks falls on the ground and is picked up afterwards, as it would be for anyone.
+        var drops = Block.getDrops(current, level, pos, level.getBlockEntity(pos), helper, hand);
         level.destroyBlock(pos, false, helper);
+        pickup.drop(pos, drops);
         if (!hand.isEmpty()) hand.hurtAndBreak(1, helper, EquipmentSlot.MAINHAND);
         reset();
         return true;
