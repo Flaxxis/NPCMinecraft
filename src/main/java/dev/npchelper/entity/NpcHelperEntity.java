@@ -186,6 +186,19 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return Vec3.atBottomCenterOf(anchor);
     }
 
+    /**
+     * Where the trade's work belongs. A sign of its own mark outranks the spot the player last sent it to: that is how a
+     * grove, a mine or a field stays where it was put, however the helper has wandered since.
+     */
+    public @Nullable Vec3 workCentre() {
+        var mark = dev.npchelper.work.HelperTrades.markFor(getProfession());
+        if (mark != null && level() instanceof ServerLevel server) {
+            BlockPos sign = dev.npchelper.work.HelperSigns.nearest(server, blockPosition(), workRadius() + 32, mark);
+            if (sign != null) return Vec3.atBottomCenterOf(sign);
+        }
+        return centre();
+    }
+
     public boolean isRetreating() {
         return retreatTicks > 0;
     }

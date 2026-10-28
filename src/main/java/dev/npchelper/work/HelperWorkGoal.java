@@ -168,9 +168,9 @@ public final class HelperWorkGoal extends Goal {
         if (step.finished()) helper.queue().advance();
     }
 
-    /** The nearest fellable log around the helper's own centre, so work stays where the player put it. */
+    /** The nearest fellable log around where the trade's work belongs — a «гай» sign if there is one. */
     private @Nullable BlockPos findLog(final ServerLevel level) {
-        Vec3 centre = helper.centre();
+        Vec3 centre = helper.workCentre();
         if (centre == null) return null;
         var logs = HelperTreeSearch.find(level, BlockPos.containing(centre), helper.workRadius() + SEARCH_MARGIN);
         return logs.isEmpty() ? null : logs.getFirst();

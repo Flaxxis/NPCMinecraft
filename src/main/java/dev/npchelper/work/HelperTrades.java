@@ -2,6 +2,7 @@ package dev.npchelper.work;
 
 import dev.npchelper.entity.HelperProfession;
 import dev.npchelper.entity.NpcHelperEntity;
+import dev.npchelper.work.HelperSigns.Mark;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.server.level.ServerLevel;
@@ -18,6 +19,17 @@ public final class HelperTrades {
     public static final int WOOD_LOAD = 64;
 
     private HelperTrades() { }
+
+    /** The sign a trade reads to know where its work is; null for trades that work wherever they stand. */
+    public static @Nullable Mark markFor(final HelperProfession profession) {
+        return switch (profession) {
+            case LUMBERJACK -> Mark.GROVE;
+            case MINER -> Mark.MINE;
+            case SMELTER -> Mark.FORGE;
+            case KEEPER -> Mark.STORE;
+            default -> null;
+        };
+    }
 
     public static List<HelperStep> planFor(final NpcHelperEntity helper, final HelperProfession profession) {
         List<HelperStep> plan = new ArrayList<>();

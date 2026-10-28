@@ -89,7 +89,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
             case GUARD -> "сторож";
             case LUMBERJACK -> "лісоруб";
             case MINER -> "шахтар";
-            case SMELTER -> "плавильник";
+            case SMELTER -> "кузнець";
             case HUNTER -> "мисливець";
             case BUILDER -> "будівельник";
             case KEEPER -> "комірник";
