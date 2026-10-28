@@ -39,7 +39,10 @@ public final class HelperTrades {
             addTool(level, helper, tool, plan);
         }
         if (profession == HelperProfession.LUMBERJACK) {
+            // The dirt comes first: without it the crown of a tall tree is out of reach.
+            plan.add(new HelperStep(HelperStep.GATHER_DIRT, "", HelperSupports.CARRY));
             plan.add(new HelperStep(HelperStep.GATHER_WOOD, "", WOOD_LOAD));
+            plan.add(new HelperStep(HelperStep.STORE, "", 1));
         }
         return plan;
     }

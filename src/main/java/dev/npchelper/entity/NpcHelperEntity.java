@@ -56,6 +56,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private static final int RETREAT_TICKS = 20 * 10;
     /** Never fall further than this of its own accord. */
     private static final int MAX_FALL = 2;
+    /** A breath between one job and the next, so a trade is a working day rather than a treadmill. */
+    private static final int REST_TICKS = 20 * 15;
 
     private static final EntityDataAccessor<Optional<EntityReference<LivingEntity>>> DATA_OWNER = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.OPTIONAL_LIVING_ENTITY_REFERENCE);
@@ -71,6 +73,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private final dev.npchelper.work.HelperPickup pickup = new dev.npchelper.work.HelperPickup(this);
     private final dev.npchelper.work.HelperBreaking breaking = new dev.npchelper.work.HelperBreaking(this, pickup);
     private final dev.npchelper.work.HelperQueue queue = new dev.npchelper.work.HelperQueue();
+    private final dev.npchelper.work.HelperSupports supports = new dev.npchelper.work.HelperSupports(this);
+    /** Ticks before a finished trade looks for the next job of its own. */
+    private int restTicks;
     /** The spot the helper keeps to in every mode but FOLLOW. */
     private BlockPos anchor = BlockPos.ZERO;
     /** While this has not run out, the helper keeps to the owner whatever its mode says. */
@@ -163,6 +168,16 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         if (retreatTicks > 0) retreatTicks--;
         pickup.tick();
 
+        // A trade with nothing left in the queue takes a breath and then looks for the next job of its own.
+        if (queue.isEmpty() && getProfession() != HelperProfession.NONE && getTarget() == null) {
+            if (++restTicks > REST_TICKS) {
+                restTicks = 0;
+                queue.set(dev.npchelper.work.HelperTrades.planFor(this, getProfession()));
+            }
+        } else {
+            restTicks = 0;
+        }
+
         LivingEntity target = getTarget();
         if (target == null) return;
 
@@ -217,6 +232,10 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
     public dev.npchelper.work.HelperQueue queue() {
         return queue;
+    }
+
+    public dev.npchelper.work.HelperSupports supports() {
+        return supports;
     }
 
     public @Nullable BlockPos placedBench() {
@@ -356,6 +375,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         output.putInt("AnchorZ", anchor.getZ());
         ContainerHelper.saveAllItems(output.child("Bag"), bag.getItems());
         queue.store(output.child("Work"));
+        supports.store(output.child("Supports"));
     }
 
     @Override
@@ -369,5 +389,6 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         if (anchor.equals(BlockPos.ZERO)) anchor = blockPosition();
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());
         queue.load(input.childOrEmpty("Work"));
+        supports.load(input.childOrEmpty("Supports"));
     }
 }

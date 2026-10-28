@@ -15,6 +15,12 @@ public final class HelperStep {
     public static final String EQUIP = "equip";
     /** Break the bench that was set down for the work and take it along. */
     public static final String TAKE_BENCH = "take_bench";
+    /** Dig soil until the count is in the bag, for the steps the work needs. */
+    public static final String GATHER_DIRT = "gather_dirt";
+    /** Put a sapling in where the trunk stood. */
+    public static final String PLANT = "plant";
+    /** Carry what was gathered to a chest or barrel and leave it there. */
+    public static final String STORE = "store";
 
     private final String type;
     private final String item;
