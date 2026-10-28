@@ -12,6 +12,8 @@ public final class HelperStep {
     public static final String PREPARE_STORE = "prepare_store";
     public static final String KEEPER_WORK = "keeper_work";
     public static final String KEEPER_DELIVER = "keeper_deliver";
+    /** The keeper's round of the warehouse: what it gathered goes in, the furnaces are emptied and loaded again. */
+    public static final String KEEPER_VISIT = "keeper_visit";
     public static final String PREPARE_GROVE = "prepare_grove";
     public static final String PREPARE_AXE = "prepare_axe";
     public static final String MARK_GROVE = "mark_grove";

@@ -66,6 +66,10 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private @Nullable Vec3 stillAt;
     private int stillTicks;
     private boolean escaping;
+    /** How often the keeper makes its round of the warehouse and the furnaces. */
+    private static final int VISIT_EVERY = 20 * 60 * 3;
+    /** When the next round is due; -1 until the keeper takes up its trade. */
+    private long nextVisit = -1;
     /** A breath between one job and the next, so a trade is a working day rather than a treadmill. */
     private static final int REST_TICKS = 20 * 15;
 
@@ -169,6 +173,24 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         this.escaping = escaping;
     }
 
+    /**
+     * Every three minutes the keeper makes its round of the warehouse — what it gathered goes in, the furnaces are
+     * emptied and loaded — whatever step its work was on. The first round is made as soon as it takes up the trade.
+     */
+    private void scheduleKeeperVisit(final ServerLevel level) {
+        if (getProfession() != HelperProfession.KEEPER) {
+            nextVisit = -1;
+            return;
+        }
+        long now = level.getGameTime();
+        if (nextVisit >= 0 && now < nextVisit) return;
+        nextVisit = now + VISIT_EVERY;
+        var current = queue.current();
+        if (current != null && current.type().equals(dev.npchelper.work.HelperStep.KEEPER_VISIT)) return;
+        workGoal.keeper().beginVisit();
+        queue.prepend(java.util.List.of(new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.KEEPER_VISIT, "", 1)));
+    }
+
     private void watchForStuck() {
         Vec3 home = centre();
         // Idle with nothing to do and already in place is resting, not being trapped.
@@ -247,6 +269,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         super.customServerAiStep(level);
         if (retreatTicks > 0) retreatTicks--;
         watchForStuck();
+        if (tickCount % 20 == 0) scheduleKeeperVisit(level);
         pickup.tick();
         eating.tick();
         passages.tick();

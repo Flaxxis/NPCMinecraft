@@ -46,6 +46,12 @@ public final class HelperRegressionTests {
         tests.register("second_tall_tree", () -> HelperRegressionTests::secondTallTree);
         tests.register("keeper_sweeps_ground", () -> HelperRegressionTests::keeperSweepsGround);
         tests.register("warehouse_any_free_slot", () -> HelperRegressionTests::warehouseAnyFreeSlot);
+        tests.register("keeper_unloads_amid_litter", () -> HelperRegressionTests::keeperUnloadsAmidLitter);
+        tests.register("keeper_smelts_ore", () -> HelperRegressionTests::keeperSmeltsOre);
+        tests.register("keeper_collects_furnace_output", () -> HelperRegressionTests::keeperCollectsFurnaceOutput);
+        tests.register("keeper_splits_across_furnaces", () -> HelperRegressionTests::keeperSplitsAcrossFurnaces);
+        tests.register("keeper_without_furnace", () -> HelperRegressionTests::keeperWithoutFurnace);
+        tests.register("keeper_night_duty", () -> HelperRegressionTests::keeperNightDuty);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
         tests.register("pickup_full_bag", () -> HelperRegressionTests::pickupFullBag);
@@ -908,13 +914,15 @@ public final class HelperRegressionTests {
         equipKit(helper);
         helper.getBag().addItem(new ItemStack(Items.OAK_PLANKS, 8));
         helper.getBag().addItem(new ItemStack(Items.STICK));
-        chest(h, 23, 20);
+        BlockPos store = chest(h, 23, 20);
         helper.setProfession(HelperProfession.KEEPER);
         helper.setNoAi(false);
         h.succeedWhen(() -> {
             h.assertTrue(HelperSigns.nearest(h.getLevel(), helper.blockPosition(), 16, HelperSigns.Mark.STORE) != null, "Keeper never crafted and placed STORE marker: " + state(h, helper) + ",problem=" + helper.workProblem());
             h.assertTrue(helper.getBag().countItem(Items.DIRT) == 10 && helper.getBag().countItem(Items.CRAFTING_TABLE) == 1, "Keeper did not retain personal supplies after marking storage");
-            h.assertTrue(helper.getBag().countItem(Items.OAK_SIGN) == 2, "Crafted or spent duplicate signs");
+            // One craft makes three signs and one went up; the spare two may be in the bag or already in the warehouse.
+            int spare = helper.getBag().countItem(Items.OAK_SIGN) + HelperContainers.containerAt(h.getLevel(), store).countItem(Items.OAK_SIGN);
+            h.assertTrue(spare == 2, "Crafted or spent duplicate signs: " + spare + " spare, " + state(h, helper));
             helper.discard();
         });
     }
@@ -1013,6 +1021,164 @@ public final class HelperRegressionTests {
             h.assertTrue(target.countItem(Items.COBBLESTONE) == 5 * 64, "What was already stored was disturbed");
             h.assertTrue(helper.getBag().countItem(Items.APPLE) == 0, "Kept the loot in the bag although there was room");
             helper.discard();
+        });
+    }
+
+    /**
+     * Things keep landing on the ground, as they do in a lived-in place, and the keeper still gets what it carries into
+     * the warehouse (game 28.10: it went round and round picking up and never took anything in, because each walk to the
+     * warehouse was turned back by the next thing lying about).
+     */
+    private static void keeperUnloadsAmidLitter(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        List<BlockPos> chests = new java.util.ArrayList<>(List.of(store));
+        for (int z : new int[] {16, 18, 22, 24}) chests.add(chest(h, 5, z));
+        helper.getBag().addItem(new ItemStack(Items.COBBLESTONE, 20));
+
+        var level = h.getLevel();
+        // Eight spots apart, one item a second: there is always something lying long enough to be taken.
+        List<net.minecraft.world.phys.Vec3> spots = new java.util.ArrayList<>();
+        for (int[] at : new int[][] {{26, 14}, {30, 18}, {30, 24}, {26, 28}, {20, 30}, {14, 28}, {12, 22}, {16, 12}}) {
+            spots.add(h.absoluteVec(net.minecraft.world.phys.Vec3.atBottomCenterOf(new BlockPos(at[0], 1, at[1]))));
+        }
+        h.onEachTick(() -> {
+            if (h.getTick() % 20 == 0) {
+                var at = spots.get((int) (h.getTick() / 20 % spots.size()));
+                level.addFreshEntity(new net.minecraft.world.entity.item.ItemEntity(level, at.x, at.y, at.z, new ItemStack(Items.STICK)));
+            }
+        });
+        // The litter gets a head start, so plenty of it has lain long enough by the time the keeper starts.
+        h.runAfterDelay(600, () -> {
+            helper.setProfession(HelperProfession.KEEPER);
+            helper.setNoAi(false);
+        });
+        h.succeedWhen(() -> {
+            int stored = chests.stream().mapToInt(pos -> HelperContainers.containerAt(level, pos).countItem(Items.COBBLESTONE)).sum();
+            h.assertTrue(stored == 20, "Never took its load in while things kept landing: " + state(h, helper));
+            helper.discard();
+        });
+    }
+
+    /** Places a furnace of the kind given and returns its container. */
+    private static net.minecraft.world.Container furnace(final GameTestHelper h, final BlockPos at, final net.minecraft.world.level.block.Block kind) {
+        h.setBlock(at, kind);
+        var placed = HelperContainers.furnaceAt(h.getLevel(), h.absolutePos(at));
+        // A test failure, not a null that brings the whole test server down.
+        h.assertTrue(placed != null, "No furnace where it was set: " + h.getLevel().getBlockState(h.absolutePos(at)));
+        return placed;
+    }
+
+    /** How much of an item the warehouse chests hold between them. */
+    private static int stored(final GameTestHelper h, final List<BlockPos> chests, final net.minecraft.world.item.Item item) {
+        return chests.stream().mapToInt(pos -> HelperContainers.containerAt(h.getLevel(), pos).countItem(item)).sum();
+    }
+
+    /** Ore and coal from the warehouse go into the furnace: just enough coal for the ore, one coal to eight. */
+    private static void keeperSmeltsOre(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var chest = HelperContainers.containerAt(h.getLevel(), store);
+        chest.setItem(0, new ItemStack(Items.RAW_IRON, 16));
+        chest.setItem(1, new ItemStack(Items.COAL, 4));
+        var blast = furnace(h, new BlockPos(7, 1, 20), Blocks.BLAST_FURNACE);
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            int inFurnace = blast.countItem(Items.RAW_IRON) + blast.countItem(Items.IRON_INGOT);
+            h.assertTrue(chest.countItem(Items.RAW_IRON) == 0 && inFurnace == 16, "Ore was not loaded into the furnace: " + state(h, helper));
+            h.assertTrue(chest.countItem(Items.COAL) == 2, "Not exactly the coal the ore needed was taken: " + chest.countItem(Items.COAL));
+            helper.discard();
+        });
+    }
+
+    /** What has finished smelting is taken out of the furnace and put into the warehouse. */
+    private static void keeperCollectsFurnaceOutput(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var furnace = furnace(h, new BlockPos(7, 1, 20), Blocks.FURNACE);
+        furnace.setItem(2, new ItemStack(Items.IRON_INGOT, 6));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(furnace.getItem(2).isEmpty() && stored(h, List.of(store), Items.IRON_INGOT) == 6,
+                    "Finished smelting was not moved into the warehouse: " + state(h, helper));
+            h.assertTrue(helper.getBag().countItem(Items.IRON_INGOT) == 0, "Kept the ingots in the bag");
+            helper.discard();
+        });
+    }
+
+    /** A big batch is shared out over the furnaces, so they all work at once. */
+    private static void keeperSplitsAcrossFurnaces(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var chest = HelperContainers.containerAt(h.getLevel(), store);
+        chest.setItem(0, new ItemStack(Items.RAW_IRON, 16));
+        chest.setItem(1, new ItemStack(Items.COAL, 4));
+        var first = furnace(h, new BlockPos(7, 1, 20), Blocks.FURNACE);
+        var second = furnace(h, new BlockPos(7, 1, 23), Blocks.FURNACE);
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            int a = first.countItem(Items.RAW_IRON) + first.countItem(Items.IRON_INGOT);
+            int b = second.countItem(Items.RAW_IRON) + second.countItem(Items.IRON_INGOT);
+            h.assertTrue(a == 8 && b == 8, "Ore was not shared between the furnaces: " + a + " and " + b + ", " + state(h, helper));
+            h.assertTrue(chest.countItem(Items.COAL) == 2, "Each furnace did not get just the one coal its eight ore needed");
+            helper.discard();
+        });
+    }
+
+    /** No furnace, no smelting: ore and coal stay where they are. */
+    private static void keeperWithoutFurnace(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var chest = HelperContainers.containerAt(h.getLevel(), store);
+        chest.setItem(0, new ItemStack(Items.RAW_IRON, 10));
+        chest.setItem(1, new ItemStack(Items.COAL, 2));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.runAfterDelay(400, () -> {
+            h.assertTrue(chest.countItem(Items.RAW_IRON) == 10 && chest.countItem(Items.COAL) == 2
+                    && helper.getBag().countItem(Items.RAW_IRON) == 0, "Moved ore about with no furnace to smelt it in");
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    /**
+     * At night the keeper stays on at the warehouse rather than going home: it still empties the furnaces, but does not
+     * go out gathering in the dark.
+     */
+    private static void keeperNightDuty(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        BlockPos store = warehouse(h, helper);
+        var furnace = furnace(h, new BlockPos(7, 1, 20), Blocks.FURNACE);
+        furnace.setItem(2, new ItemStack(Items.GOLD_INGOT, 4));
+        var level = h.getLevel();
+        var at = h.absoluteVec(net.minecraft.world.phys.Vec3.atBottomCenterOf(new BlockPos(26, 1, 26)));
+        var litter = new net.minecraft.world.entity.item.ItemEntity(level, at.x, at.y, at.z, new ItemStack(Items.STRING, 3));
+        level.addFreshEntity(litter);
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.runAfterDelay(900, () -> {
+            h.assertTrue(dev.npchelper.entity.HelperNightGoal.night(helper), "Night test environment was not applied");
+            h.assertTrue(!helper.nightGoal().active(), "The keeper went home for the night instead of staying on");
+            h.assertTrue(stored(h, List.of(store), Items.GOLD_INGOT) == 4, "Did not tend the furnaces at night: " + state(h, helper));
+            h.assertTrue(litter.isAlive(), "Went out gathering in the dark");
+            helper.discard();
+            h.succeed();
         });
     }
 

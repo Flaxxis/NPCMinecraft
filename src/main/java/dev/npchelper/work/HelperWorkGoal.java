@@ -48,6 +48,7 @@ public final class HelperWorkGoal extends Goal {
     private double markerDistance = Double.MAX_VALUE;
 
     public String problem() { return problem.isEmpty() ? keeper.problem() : problem; }
+    public HelperKeeper keeper() { return keeper; }
 
     public HelperWorkGoal(final NpcHelperEntity helper) {
         this.helper = helper;
@@ -105,6 +106,9 @@ public final class HelperWorkGoal extends Goal {
             }
             case HelperStep.KEEPER_DELIVER -> {
                 if (keeper.deliver(level)) helper.queue().advance();
+            }
+            case HelperStep.KEEPER_VISIT -> {
+                if (keeper.visit(level)) helper.queue().advance();
             }
             case HelperStep.KEEPER_WORK -> {
                 if (!kitReady()) helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_KIT, "", 1)));

@@ -39,7 +39,10 @@ public final class HelperNightGoal extends Goal {
         return helper.level().dimensionType().hasSkyLight() && time >= HEAD_HOME && time < DAYBREAK;
     }
 
-    public boolean wanted() { return !helper.isExpedition() && night(helper); }
+    /** The keeper's place at night is the warehouse: it stays on, tending the chests and the furnaces. */
+    public boolean wanted() {
+        return !helper.isExpedition() && helper.getProfession() != HelperProfession.KEEPER && night(helper);
+    }
     public boolean active() { return active; }
     public boolean hasDestination() { return destination != null; }
 

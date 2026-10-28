@@ -13,6 +13,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.jspecify.annotations.Nullable;
@@ -346,6 +347,269 @@ public final class HelperKeeper {
         return false;
     }
 
+    // ---- the round of the warehouse, every three minutes ----
+
+    /** The stages of a round, in order: what was gathered goes in, the furnaces are emptied, then loaded again. */
+    private enum Visit { UNLOAD, COLLECT, SMELT, DONE }
+
+    /** Furnace slots, as the game numbers them. */
+    private static final int FURNACE_INPUT = 0, FURNACE_FUEL = 1, FURNACE_RESULT = 2;
+    /** One coal smelts eight items, in a furnace and in a blast furnace alike. */
+    private static final int PER_COAL = 8;
+
+    private Visit visit = Visit.DONE;
+    private @Nullable List<BlockPos> visitFurnaces;
+    private final java.util.Set<BlockPos> loadedThisVisit = new java.util.HashSet<>();
+    private @Nullable BlockPos loadFurnace;
+    private @Nullable Item loadOre;
+    private int loadOreCount, loadCoalCount;
+
+    /** Starts a round from the beginning. */
+    public void beginVisit() {
+        visit = Visit.UNLOAD;
+        visitFurnaces = null;
+        loadedThisVisit.clear();
+        loadFurnace = null;
+        loadOre = null;
+    }
+
+    /**
+     * One step of the round. True when it is over. With no furnace about, the round is just the unloading: smelting is
+     * only ever done where there is something to smelt in.
+     */
+    public boolean visit(final ServerLevel level) {
+        enableNavigation();
+        if (!helper.getCargo().isEmpty()) { deliver(level); return false; }
+        if (findWarehouse(level) == null) {
+            problem = "Немає складу: потрібна табличка «склад» біля скрині";
+            return true;
+        }
+        List<BlockPos> stores = warehouseChests(level);
+        switch (visit) {
+            case UNLOAD -> {
+                if (!unloadBag(level, stores)) visit = Visit.COLLECT;
+                return false;
+            }
+            case COLLECT -> {
+                if (collectFurnaces(level, stores)) visit = Visit.SMELT;
+                return false;
+            }
+            case SMELT -> {
+                if (loadFurnaces(level, stores)) visit = Visit.DONE;
+                return false;
+            }
+            default -> {
+                return true;
+            }
+        }
+    }
+
+    /** Furnaces and blast furnaces about the warehouse, blast furnaces first: looked for once a round. */
+    private List<BlockPos> furnaces(final ServerLevel level) {
+        if (visitFurnaces == null) visitFurnaces = findFurnaces(level);
+        return visitFurnaces;
+    }
+
+    private List<BlockPos> findFurnaces(final ServerLevel level) {
+        List<BlockPos> found = new ArrayList<>();
+        for (BlockPos pos : BlockPos.betweenClosed(warehouse.offset(-WAREHOUSE_RADIUS, -4, -WAREHOUSE_RADIUS),
+                warehouse.offset(WAREHOUSE_RADIUS, 4, WAREHOUSE_RADIUS))) {
+            var entity = level.getBlockEntity(pos);
+            if (entity instanceof net.minecraft.world.level.block.entity.BlastFurnaceBlockEntity
+                    || entity instanceof net.minecraft.world.level.block.entity.FurnaceBlockEntity) found.add(pos.immutable());
+        }
+        found.sort(Comparator.comparingInt((BlockPos pos) ->
+                level.getBlockEntity(pos) instanceof net.minecraft.world.level.block.entity.BlastFurnaceBlockEntity ? 0 : 1)
+                .thenComparingDouble(pos -> pos.distSqr(warehouse)));
+        return found;
+    }
+
+    /** What has finished smelting comes out and goes into the chests. True once every furnace is empty of it. */
+    private boolean collectFurnaces(final ServerLevel level, final List<BlockPos> stores) {
+        for (BlockPos pos : furnaces(level)) {
+            Container furnace = HelperContainers.furnaceAt(level, pos);
+            if (furnace == null || furnace.getItem(FURNACE_RESULT).isEmpty() || !reachable(level, pos)) continue;
+            if (freeSlots() == 0) break;
+            if (!walk(level, pos)) return false;
+            ItemStack ready = furnace.getItem(FURNACE_RESULT);
+            ItemStack left = helper.getBag().addItem(ready.copy());
+            furnace.setItem(FURNACE_RESULT, left);
+            furnace.setChanged();
+            helper.queue().noteProgress();
+            return false;
+        }
+        return !unloadBag(level, stores);
+    }
+
+    /** Raw metal and metal ore: what a blast furnace is for. Nothing else is put to the fire. */
+    private static boolean ore(final ItemStack stack) {
+        return stack.is(Items.RAW_IRON) || stack.is(Items.RAW_GOLD) || stack.is(Items.RAW_COPPER)
+                || stack.is(net.minecraft.tags.ItemTags.IRON_ORES) || stack.is(net.minecraft.tags.ItemTags.GOLD_ORES)
+                || stack.is(net.minecraft.tags.ItemTags.COPPER_ORES);
+    }
+
+    private static boolean coal(final ItemStack stack) {
+        return stack.is(net.minecraft.tags.ItemTags.COALS);
+    }
+
+    /**
+     * Loads ore and coal into the furnaces, a furnace at a time, the ore shared out between them so they all work at once.
+     * Coal goes in only as much as the ore needs, on top of what is in the furnace already. True once there is no ore, no
+     * coal, or no furnace that will take any.
+     */
+    private boolean loadFurnaces(final ServerLevel level, final List<BlockPos> stores) {
+        List<BlockPos> furnaces = furnaces(level);
+        if (furnaces.isEmpty()) return true;
+
+        if (loadFurnace == null && !planLoad(level, stores, furnaces)) return true;
+        BlockPos target = loadFurnace;
+
+        // First fetch what the load needs out of the chests, then carry it over.
+        if (helper.getBag().countItem(loadOre) < loadOreCount) return fetch(level, stores, stack -> stack.is(loadOre), loadOreCount);
+        if (countCoal() < loadCoalCount) return fetch(level, stores, HelperKeeper::coal, loadCoalCount);
+
+        if (!walk(level, target)) return false;
+        Container furnace = HelperContainers.furnaceAt(level, target);
+        if (furnace != null) {
+            if (loadCoalCount > 0) {
+                ItemStack fuel = takeFromBag(HelperKeeper::coal, loadCoalCount);
+                ItemStack inFuel = furnace.getItem(FURNACE_FUEL);
+                if (inFuel.isEmpty()) furnace.setItem(FURNACE_FUEL, fuel);
+                else if (ItemStack.isSameItemSameComponents(inFuel, fuel)) inFuel.grow(fuel.getCount());
+                else helper.getBag().addItem(fuel);
+            }
+            ItemStack load = takeFromBag(stack -> stack.is(loadOre), loadOreCount);
+            ItemStack inInput = furnace.getItem(FURNACE_INPUT);
+            if (inInput.isEmpty()) furnace.setItem(FURNACE_INPUT, load);
+            else if (ItemStack.isSameItemSameComponents(inInput, load)) inInput.grow(load.getCount());
+            else helper.getBag().addItem(load);
+            furnace.setChanged();
+            helper.queue().noteProgress();
+        }
+        loadedThisVisit.add(target);
+        loadFurnace = null;
+        return false;
+    }
+
+    /** Chooses the next furnace and how much ore and coal it gets. False when nothing more can be smelted this round. */
+    private boolean planLoad(final ServerLevel level, final List<BlockPos> stores, final List<BlockPos> furnaces) {
+        java.util.Map<Item, Integer> ores = new java.util.LinkedHashMap<>();
+        int coalStored = 0;
+        for (BlockPos pos : stores) {
+            Container container = HelperContainers.containerAt(level, pos);
+            if (container == null) continue;
+            for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                ItemStack stack = container.getItem(slot);
+                if (ore(stack)) ores.merge(stack.getItem(), stack.getCount(), Integer::sum);
+                else if (coal(stack)) coalStored += stack.getCount();
+            }
+        }
+        if (ores.isEmpty()) return false;
+
+        List<BlockPos> open = new ArrayList<>();
+        for (BlockPos pos : furnaces) {
+            if (loadedThisVisit.contains(pos) || !reachable(level, pos)) continue;
+            Container furnace = HelperContainers.furnaceAt(level, pos);
+            if (furnace == null) continue;
+            ItemStack fuel = furnace.getItem(FURNACE_FUEL);
+            // A furnace burning something else is somebody's: it is left as it is.
+            if (!fuel.isEmpty() && !coal(fuel)) continue;
+            open.add(pos);
+        }
+        if (open.isEmpty()) return false;
+
+        for (BlockPos pos : open) {
+            Container furnace = HelperContainers.furnaceAt(level, pos);
+            ItemStack input = furnace.getItem(FURNACE_INPUT);
+            ItemStack fuel = furnace.getItem(FURNACE_FUEL);
+            // The ore already in it decides what more goes in; an empty one takes whatever there is most of.
+            Item kind = input.isEmpty()
+                    ? ores.entrySet().stream().max(java.util.Map.Entry.comparingByValue()).orElseThrow().getKey()
+                    : input.getItem();
+            if (!input.isEmpty() && (!ore(input) || !ores.containsKey(kind))) continue;
+
+            int available = ores.getOrDefault(kind, 0);
+            // Shared out over the furnaces still open, so they all work at once.
+            int share = (available + open.size() - 1) / open.size();
+            // Room is measured by the ore's own stack size: an empty slot would report one, the size of nothing.
+            int room = new ItemStack(kind).getMaxStackSize() - input.getCount();
+            int amount = Math.min(Math.min(share, available), room);
+            int inFurnace = input.getCount() + amount;
+            int coalNeeded = Math.max(0, (inFurnace + PER_COAL - 1) / PER_COAL - fuel.getCount());
+            if (coalNeeded > coalStored) {
+                coalNeeded = coalStored;
+                amount = Math.min(amount, (fuel.getCount() + coalNeeded) * PER_COAL - input.getCount());
+            }
+            if (amount <= 0) continue;
+
+            loadFurnace = pos;
+            loadOre = kind;
+            loadOreCount = amount;
+            loadCoalCount = coalNeeded;
+            return true;
+        }
+        return false;
+    }
+
+    /** Goes to the nearest warehouse chest holding what is wanted and takes up to the count the load needs. */
+    private boolean fetch(final ServerLevel level, final List<BlockPos> stores,
+                          final java.util.function.Predicate<ItemStack> wanted, final int target) {
+        for (BlockPos pos : stores) {
+            Container container = HelperContainers.containerAt(level, pos);
+            if (container == null || !reachable(level, pos)) continue;
+            boolean holds = false;
+            for (int slot = 0; slot < container.getContainerSize() && !holds; slot++) holds = wanted.test(container.getItem(slot));
+            if (!holds) continue;
+            if (!walk(level, pos)) return false;
+            int missing = target - countInBag(wanted);
+            for (int slot = 0; slot < container.getContainerSize() && missing > 0; slot++) {
+                ItemStack stack = container.getItem(slot);
+                if (!wanted.test(stack)) continue;
+                ItemStack taken = container.removeItem(slot, Math.min(missing, stack.getCount()));
+                ItemStack left = helper.getBag().addItem(taken);
+                missing -= taken.getCount() - left.getCount();
+                if (!left.isEmpty()) container.setItem(slot, left);
+            }
+            container.setChanged();
+            helper.queue().noteProgress();
+            return false;
+        }
+        // The chests ran short while it walked: what it has is all the furnace gets.
+        loadOreCount = Math.min(loadOreCount, helper.getBag().countItem(loadOre));
+        loadCoalCount = Math.min(loadCoalCount, countCoal());
+        if (loadOreCount <= 0) loadFurnace = null;
+        return false;
+    }
+
+    private int countCoal() {
+        return countInBag(HelperKeeper::coal);
+    }
+
+    private int countInBag(final java.util.function.Predicate<ItemStack> wanted) {
+        int count = 0;
+        var bag = helper.getBag();
+        for (int slot = 0; slot < bag.getContainerSize(); slot++) {
+            if (wanted.test(bag.getItem(slot))) count += bag.getItem(slot).getCount();
+        }
+        return count;
+    }
+
+    /** Takes up to the count of what is wanted out of the bag, as one stack. */
+    private ItemStack takeFromBag(final java.util.function.Predicate<ItemStack> wanted, final int count) {
+        ItemStack taken = ItemStack.EMPTY;
+        var bag = helper.getBag();
+        for (int slot = 0; slot < bag.getContainerSize() && (taken.isEmpty() || taken.getCount() < count); slot++) {
+            ItemStack stack = bag.getItem(slot);
+            if (!wanted.test(stack) || (!taken.isEmpty() && !ItemStack.isSameItemSameComponents(taken, stack))) continue;
+            int amount = Math.min(stack.getCount(), count - (taken.isEmpty() ? 0 : taken.getCount()));
+            if (taken.isEmpty()) taken = stack.copyWithCount(amount);
+            else taken.grow(amount);
+            stack.shrink(amount);
+        }
+        bag.setChanged();
+        return taken;
+    }
+
     private int freeSlots() {
         int free = 0;
         var bag = helper.getBag();
@@ -391,7 +655,8 @@ public final class HelperKeeper {
         if (turnEnds < 0) turnEnds = now + GATHER_TURN;
 
         if (gathering) {
-            boolean busy = sweepGround(level, stores);
+            // At night the keeper keeps to the warehouse: the chests and furnaces, not the dark beyond them.
+            boolean busy = !dev.npchelper.entity.HelperNightGoal.night(helper) && sweepGround(level, stores);
             if (busy && (now < turnEnds || looseTarget != null)) return false;
             // What was gathered goes in, all in one walk rather than a walk per item.
             if (unloadBag(level, stores)) return false;

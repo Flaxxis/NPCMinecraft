@@ -56,6 +56,16 @@ public final class HelperContainers {
         return level.getBlockEntity(pos) instanceof BarrelBlockEntity barrel ? barrel : null;
     }
 
+    /**
+     * A furnace or blast furnace as something to put into and take out of. Kept apart from {@link #containerAt}, which is
+     * storage only, so a furnace is never mistaken for a chest and filled with whatever needs a home.
+     */
+    public static @Nullable Container furnaceAt(final Level level, final BlockPos pos) {
+        var entity = level.getBlockEntity(pos);
+        return entity instanceof net.minecraft.world.level.block.entity.FurnaceBlockEntity
+                || entity instanceof net.minecraft.world.level.block.entity.BlastFurnaceBlockEntity ? (Container) entity : null;
+    }
+
     public static BlockPos canonical(final Level level, final BlockPos pos) {
         var state = level.getBlockState(pos);
         if (state.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
