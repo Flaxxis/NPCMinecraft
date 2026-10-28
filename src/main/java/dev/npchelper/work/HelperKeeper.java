@@ -8,9 +8,11 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.jspecify.annotations.Nullable;
@@ -18,7 +20,19 @@ import org.jspecify.annotations.Nullable;
 /** One real stack per trip, kept in the visible, saved cargo slot until a destination accepts it. */
 public final class HelperKeeper {
     public static final int WAREHOUSE_RADIUS = 16;
+    /** Something on the ground is left this long before it counts as lying about rather than just dropped. */
+    private static final int SETTLE_AGE = 20 * 10;
+    /** Another helper's harvest that has lain this long has plainly been given up on. */
+    private static final int ABANDONED_AGE = 20 * 120;
+    /** An item it could not get to is left alone this long before it is tried again. */
+    private static final int LOOSE_RETRY_TICKS = 20 * 30;
+
     private final NpcHelperEntity helper;
+    private @Nullable ItemEntity looseTarget;
+    private @Nullable ItemEntity chasedLoose;
+    private double bestLooseDistance;
+    private long looseProgress;
+    private final Map<UUID, Long> looseRetryAfter = new HashMap<>();
     private @Nullable BlockPos warehouse;
     private @Nullable BlockPos walkTarget;
     private final Map<BlockPos, Long> retryAfter = new HashMap<>();
@@ -36,6 +50,9 @@ public final class HelperKeeper {
         navigating = false;
         problem = "";
         retryAfter.clear();
+        looseTarget = null;
+        chasedLoose = null;
+        looseRetryAfter.clear();
     }
 
     private void enableNavigation() {
@@ -177,6 +194,93 @@ public final class HelperKeeper {
         return helper.getCargo().isEmpty();
     }
 
+    /**
+     * Picks up what lies about within its range and has a place in the warehouse. Something just thrown down is let lie a
+     * moment, so the player is not robbed of what they dropped a second ago, and another helper's harvest is left for that
+     * helper — unless it has plainly been abandoned. True while a pick-up is under way.
+     */
+    private boolean sweepGround(final ServerLevel level, final List<BlockPos> stores) {
+        var centre = helper.centre();
+        if (centre == null) return false;
+
+        if (looseTarget != null && (!looseTarget.isAlive() || !worthTaking(level, looseTarget, stores))) looseTarget = null;
+        if (looseTarget == null) looseTarget = nearestLoose(level, centre, stores);
+        if (looseTarget == null) return false;
+
+        ItemEntity item = looseTarget;
+        if (touches(item)) {
+            helper.getNavigation().stop();
+            ItemStack lying = item.getItem();
+            int amount = Math.min(lying.getCount(), lying.getMaxStackSize());
+            helper.getCargo().setItem(0, lying.copyWithCount(amount));
+            if (amount >= lying.getCount()) item.discard();
+            else item.setItem(lying.copyWithCount(lying.getCount() - amount));
+            level.playSound(null, helper.blockPosition(), net.minecraft.sounds.SoundEvents.ITEM_PICKUP,
+                    net.minecraft.sounds.SoundSource.NEUTRAL, 0.2F, 1.1F);
+            helper.queue().noteProgress();
+            looseTarget = null;
+            return true;
+        }
+
+        enableNavigation();
+        double distance = helper.distanceToSqr(item);
+        if (item != chasedLoose) {
+            chasedLoose = item;
+            bestLooseDistance = Double.MAX_VALUE;
+            looseProgress = level.getGameTime();
+        }
+        if (distance + 0.1D < bestLooseDistance) {
+            bestLooseDistance = distance;
+            looseProgress = level.getGameTime();
+            helper.queue().noteProgress();
+        }
+        // No closer in five seconds: set it aside for a while instead of circling it forever.
+        if (level.getGameTime() - looseProgress > 100) {
+            looseRetryAfter.put(item.getUUID(), level.getGameTime() + LOOSE_RETRY_TICKS);
+            looseTarget = null;
+            chasedLoose = null;
+            helper.getNavigation().stop();
+            return false;
+        }
+        if (helper.getNavigation().isDone() || helper.getNavigation().isStuck()) {
+            helper.getNavigation().moveTo(item, 1.0D);
+        }
+        return true;
+    }
+
+    private @Nullable ItemEntity nearestLoose(final ServerLevel level, final net.minecraft.world.phys.Vec3 centre,
+                                              final List<BlockPos> stores) {
+        double radius = helper.workRadius();
+        var box = new net.minecraft.world.phys.AABB(centre, centre).inflate(radius, Math.min(radius, 16.0D), radius);
+        looseRetryAfter.values().removeIf(until -> until < level.getGameTime());
+        ItemEntity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (ItemEntity item : level.getEntitiesOfClass(ItemEntity.class, box)) {
+            if (item.position().distanceTo(centre) > radius || !worthTaking(level, item, stores)) continue;
+            double distance = helper.distanceToSqr(item);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    private boolean worthTaking(final ServerLevel level, final ItemEntity item, final List<BlockPos> stores) {
+        if (!item.isAlive() || item.hasPickUpDelay() || item.getAge() < SETTLE_AGE) return false;
+        if (looseRetryAfter.containsKey(item.getUUID())) return false;
+        // Burning or in lava: it is going anyway, and walking in after it is how a helper dies.
+        if (item.isInLava() || item.isOnFire()) return false;
+        // Another helper's harvest is that helper's, until it has lain long enough to be plainly forgotten.
+        if (HelperPickup.claimedByAnother(item, helper) && item.getAge() < ABANDONED_AGE) return false;
+        return destination(level, stores, item.getItem()) != null;
+    }
+
+    /** The player's own reach: the body widened by a block sideways and half a block up and down. */
+    private boolean touches(final ItemEntity item) {
+        return helper.getBoundingBox().inflate(1.0D, 0.5D, 1.0D).intersects(item.getBoundingBox());
+    }
+
     private void withdraw(final Container source, final int slot, final int count) {
         if (!helper.getCargo().isEmpty() || count <= 0) return;
         ItemStack moved = source.removeItem(slot, count);
@@ -196,6 +300,8 @@ public final class HelperKeeper {
         if (!helper.getCargo().isEmpty()) { deliver(level); return false; }
         if (findWarehouse(level) == null) { prepare(level); return false; }
         List<BlockPos> stores = warehouseChests(level);
+        // Things lying on the ground come first: left there, they are gone in five minutes.
+        if (sweepGround(level, stores)) return false;
         var scanned = new LinkedHashSet<>(stores);
         if (helper.centre() != null) scanned.addAll(HelperContainers.around(level, BlockPos.containing(helper.centre()), helper.workRadius()));
         // Merge duplicate slots within every inspected chest, while actually standing beside it.
