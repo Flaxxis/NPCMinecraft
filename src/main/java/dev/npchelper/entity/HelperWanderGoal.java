@@ -44,6 +44,13 @@ public final class HelperWanderGoal extends Goal {
             return;
         }
 
+        if (helper.mustReturnToOwner()) {
+            if (helper.tickCount % 10 == 0 || helper.getNavigation().isDone()) {
+                helper.getNavigation().moveTo(centre.x, centre.y, centre.z, SPEED);
+            }
+            return;
+        }
+
         if (!helper.getNavigation().isDone()) return;
         if (cooldown-- > 0) return;
         cooldown = PAUSE_MIN + helper.getRandom().nextInt(PAUSE_MAX - PAUSE_MIN);

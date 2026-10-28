@@ -21,8 +21,8 @@ import org.jspecify.annotations.Nullable;
  * «Get me one of those», worked out backwards from the game's own recipes rather than from a table written by hand: what is
  * in the bag already, what a recipe needs, and what the helper knows how to gather. The answer is a plain list of steps.
  *
- * Wood is one family — any log, any plank — because the recipes take them all; planks and sticks are made by whichever craft
- * needs them. Anything none of the skills can reach is said plainly instead of being attempted.
+ * Wood is one family — any log, any plank — because the recipes take them all; intermediate planks and sticks
+ * are scheduled as explicit crafts. Anything none of the skills can reach is said plainly instead of being attempted.
  */
 public final class HelperObtain {
     /** The result: steps to run, or why there are none. */
@@ -39,6 +39,7 @@ public final class HelperObtain {
     private final ServerLevel level;
     /** A bench within reach means a 3x3 recipe needs no new one. */
     private boolean bench;
+    private int projectedLogs;
     private final Map<String, Integer> bag = new HashMap<>();
     private final List<HelperStep> steps = new ArrayList<>();
     private final Set<String> active = new HashSet<>();
@@ -49,6 +50,7 @@ public final class HelperObtain {
         this.bench = bench;
         for (ItemStack stack : carried) {
             if (!stack.isEmpty()) bag.merge(key(stack.getItem()), stack.getCount(), Integer::sum);
+            if (stack.is(ItemTags.LOGS)) projectedLogs += stack.getCount();
         }
     }
 
@@ -85,18 +87,27 @@ public final class HelperObtain {
     private boolean produce(final String key, final int count, final int depth) {
         switch (key) {
             case LOGS -> {
-                return add(new HelperStep(HelperStep.GATHER_WOOD, "", count));
+                projectedLogs += count;
+                return add(new HelperStep(HelperStep.GATHER_WOOD, "", projectedLogs));
             }
-            // Planks and sticks are made by the craft that needs them, so only their own material is asked for here.
+            // Intermediate crafts preserve their surplus for subsequent recipe ingredients.
             case PLANKS -> {
-                return need(LOGS, ceil(count, 4), depth + 1);
+                int crafts = ceil(count, 4);
+                if (!need(LOGS, crafts, depth + 1)) return false;
+                projectedLogs -= crafts;
+                bag.merge(PLANKS, crafts * 4 - count, Integer::sum);
+                return add(new HelperStep(HelperStep.CRAFT, PLANKS, crafts));
             }
             case STICK -> {
-                return need(PLANKS, ceil(count, 4) * 2, depth + 1);
+                int crafts = ceil(count, 4);
+                if (!need(PLANKS, crafts * 2, depth + 1)) return false;
+                bag.merge(STICK, crafts * 4 - count, Integer::sum);
+                return add(new HelperStep(HelperStep.CRAFT, STICK, crafts));
             }
             default -> { }
         }
-        Item item = BuiltInRegistries.ITEM.getOptional(net.minecraft.resources.Identifier.parse(key)).orElse(null);
+        Item item = key.equals("#signs") ? Items.OAK_SIGN
+                : BuiltInRegistries.ITEM.getOptional(net.minecraft.resources.Identifier.parse(key)).orElse(null);
         if (item == null) return refuse("Невідомий предмет " + key + ".");
         if (craft(item, count, depth)) return true;
         return refuse("Не знаю, де взяти " + name(item) + ": копати й плавити я ще не вмію.");
@@ -119,10 +130,8 @@ public final class HelperObtain {
             // One slot takes one item, so the slot map is what says how many of each ingredient a craft eats.
             Map<String, Integer> needed = new LinkedHashMap<>();
             boolean known = true;
-            int slots = 0;
             for (int index : placement.slotsToIngredientIndex()) {
                 if (index < 0 || index >= ingredients.size()) continue;
-                slots++;
                 String option = cheapest(ingredients.get(index));
                 if (option == null) {
                     known = false;
@@ -132,24 +141,30 @@ public final class HelperObtain {
             }
             if (!known || needed.isEmpty()) continue;
 
-            // More than four slots means a 3x3 grid, which wants a bench to work at.
-            boolean large = slots > 4;
-            if (large && !bench) needed.merge(LOGS, 1, Integer::sum);
+            // A recipe wider or taller than 2x2 also needs a real table.
+            boolean large = HelperCrafting.needsBench(recipe);
 
             var saved = Map.copyOf(bag);
             int stepsBefore = steps.size();
-            boolean all = true;
+            boolean savedBench = bench;
+            int savedLogs = projectedLogs;
+            boolean all = !large || bench || need(key(Items.CRAFTING_TABLE), 1, depth + 1);
+            if (large && all) bench = true;
             for (var entry : needed.entrySet()) {
-                if (!need(entry.getKey(), entry.getValue(), depth + 1)) {
+                if (!all || !need(entry.getKey(), entry.getValue(), depth + 1)) {
                     all = false;
                     break;
                 }
             }
-            if (all && add(new HelperStep(HelperStep.CRAFT, key(item), count))) {
+            if (all && add(new HelperStep(HelperStep.CRAFT, key(item), crafts))) {
+                projectedLogs -= needed.getOrDefault(LOGS, 0);
+                bag.merge(key(item), crafts * result.getCount() - count, Integer::sum);
                 why = before;
                 if (large) bench = true;
                 return true;
             }
+            bench = savedBench;
+            projectedLogs = savedLogs;
             bag.clear();
             bag.putAll(saved);
             while (steps.size() > stepsBefore) steps.removeLast();
@@ -195,6 +210,7 @@ public final class HelperObtain {
         ItemStack stack = new ItemStack(item);
         if (stack.is(ItemTags.LOGS)) return LOGS;
         if (stack.is(ItemTags.PLANKS)) return PLANKS;
+        if (stack.is(ItemTags.SIGNS)) return "#signs";
         return BuiltInRegistries.ITEM.getKey(item).toString();
     }
 

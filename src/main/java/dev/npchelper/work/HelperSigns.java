@@ -129,14 +129,24 @@ public final class HelperSigns {
         return here;
     }
 
+    /** Standing signs can replace vegetation, but never fluids or an existing solid block. */
+    public static boolean canPlace(final ServerLevel level, final BlockPos pos) {
+        if (!level.hasChunkAt(pos)) return false;
+        BlockState current = level.getBlockState(pos);
+        return (current.isAir() || current.canBeReplaced()) && current.getFluidState().isEmpty()
+                && level.getBlockState(pos.below()).isFaceSturdy(level, pos.below(), net.minecraft.core.Direction.UP);
+    }
+
     /** Sets a sign down at the spot with that mark on it, taking one out of the bag. True when it went up. */
     public static boolean place(final ServerLevel level, final Container bag, final BlockPos pos, final Mark mark) {
-        if (!level.getBlockState(pos).isAir() || !level.getBlockState(pos.below()).isSolid()) return false;
+        if (!canPlace(level, pos)) return false;
 
         int slot = findSign(bag);
         if (slot < 0) return false;
 
-        BlockState sign = Blocks.OAK_SIGN.defaultBlockState();
+        ItemStack carried = bag.getItem(slot);
+        if (!(carried.getItem() instanceof net.minecraft.world.item.BlockItem blockItem)) return false;
+        BlockState sign = blockItem.getBlock().defaultBlockState();
         if (!level.setBlockAndUpdate(pos, sign)) return false;
         if (!(level.getBlockEntity(pos) instanceof SignBlockEntity entity)) {
             level.removeBlock(pos, false);
@@ -150,6 +160,7 @@ public final class HelperSigns {
                 net.minecraft.network.chat.Component.empty());
         entity.setText(new SignText(lines, lines, net.minecraft.world.item.DyeColor.BLACK, false), SignTextSlot.FRONT);
         entity.setChanged();
+        level.sendBlockUpdated(pos, sign, sign, 3);
 
         bag.removeItem(slot, 1);
         bag.setChanged();

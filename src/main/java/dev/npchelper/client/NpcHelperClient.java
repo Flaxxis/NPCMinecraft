@@ -13,6 +13,13 @@ import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 public final class NpcHelperClient {
     private NpcHelperClient() { }
 
+    public static void receiveActions(final dev.npchelper.net.HelperActions message) {
+        var player = net.minecraft.client.Minecraft.getInstance().player;
+        if (player != null && player.containerMenu instanceof dev.npchelper.inventory.HelperMenu menu) {
+            menu.receiveActions(message);
+        }
+    }
+
     @SubscribeEvent
     public static void registerRenderers(final EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(NpcHelperMod.HELPER.get(), HelperRenderer::new);

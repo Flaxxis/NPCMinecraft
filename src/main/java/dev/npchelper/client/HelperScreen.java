@@ -16,9 +16,9 @@ import net.minecraftforge.network.PacketDistributor;
 
 /** The helper's interface: gear, bag, modes and a name box. Drawn rather than blitted, so it needs no texture of its own. */
 public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
-    private static final int WIDTH = 300, HEIGHT = 286;
+    private static final int WIDTH = 300, HEIGHT = 330;
     /** Each control keeps its own band, so nothing is drawn over anything else. */
-    private static final int NAME_Y = 22, MODES_Y = 44, RANGE_Y = 68, TRADE_Y = 92, STATE_Y = 116;
+    private static final int NAME_Y = 22, TABS_Y = 44, MODES_Y = 70, RANGE_Y = 94, STATE_Y = 122;
 
     private static final int BORDER = 0xFF555F70;
     private static final int PANEL = 0xFF161C28;
@@ -28,7 +28,14 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private static final int ACTIVE = 0xFF7BE87B;
 
     private EditBox nameBox;
-    private Button roamButton, stayButton, followButton, radiusButton, professionButton;
+    private Button expeditionButton;
+    private Button roamButton, stayButton, followButton, movementTab, professionTab, actionsTab, previousPage, nextPage;
+    private final java.util.List<Button> radiusButtons = new java.util.ArrayList<>();
+    private final java.util.List<Button> professionButtons = new java.util.ArrayList<>();
+    private enum Tab { MOVEMENT, PROFESSIONS, ACTIONS }
+    private Tab selectedTab = Tab.MOVEMENT;
+    private static final int PAGE_SIZE = 6;
+    private int actionPage;
 
     public HelperScreen(final HelperMenu menu, final Inventory inventory, final Component title) {
         super(menu, inventory, title, WIDTH, HEIGHT);
@@ -49,7 +56,18 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         nameBox.setResponder(this::sendName);
         addRenderableWidget(nameBox);
 
-        // Three rows, each clear of the next: how it moves, how far, and what it does.
+        radiusButtons.clear();
+        professionButtons.clear();
+        movementTab = addRenderableWidget(Button.builder(Component.literal("Переміщення"), b -> selectTab(Tab.MOVEMENT))
+                .bounds(leftPos + HelperMenu.LEFT, topPos + TABS_Y, 90, 20).build());
+        professionTab = addRenderableWidget(Button.builder(Component.literal("Професії"), b -> selectTab(Tab.PROFESSIONS))
+                .bounds(leftPos + HelperMenu.LEFT + 93, topPos + TABS_Y, 90, 20).build());
+        actionsTab = addRenderableWidget(Button.builder(Component.literal("Дії"), b -> selectTab(Tab.ACTIONS))
+                .bounds(leftPos + HelperMenu.LEFT + 186, topPos + TABS_Y, 90, 20).build());
+        previousPage = addRenderableWidget(Button.builder(Component.literal("Назад"), b -> changePage(-1))
+                .bounds(leftPos + HelperMenu.LEFT, topPos + 300, 76, 20).build());
+        nextPage = addRenderableWidget(Button.builder(Component.literal("Далі"), b -> changePage(1))
+                .bounds(leftPos + HelperMenu.LEFT + 200, topPos + 300, 76, 20).build());
         int modesY = topPos + MODES_Y;
         roamButton = addRenderableWidget(Button.builder(Component.literal("Вільно"), b -> press(HelperMenu.BUTTON_ROAM))
                 .bounds(leftPos + HelperMenu.LEFT, modesY, 90, 20).build());
@@ -58,10 +76,61 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         followButton = addRenderableWidget(Button.builder(Component.literal("За мною"), b -> press(HelperMenu.BUTTON_FOLLOW))
                 .bounds(leftPos + HelperMenu.LEFT + 186, modesY, 90, 20).build());
 
-        radiusButton = addRenderableWidget(Button.builder(radiusLabel(), b -> press(HelperMenu.BUTTON_RADIUS))
-                .bounds(leftPos + HelperMenu.LEFT, topPos + RANGE_Y, 276, 20).build());
-        professionButton = addRenderableWidget(Button.builder(professionLabel(), b -> press(HelperMenu.BUTTON_PROFESSION))
-                .bounds(leftPos + HelperMenu.LEFT, topPos + TRADE_Y, 276, 20).build());
+        for (int index = 0; index < NpcHelperEntity.ROAM_RADII.length; index++) {
+            final int choice = index;
+            radiusButtons.add(addRenderableWidget(Button.builder(Component.literal("" + NpcHelperEntity.ROAM_RADII[index]),
+                    b -> press(HelperMenu.BUTTON_RADIUS + choice))
+                    .bounds(leftPos + HelperMenu.LEFT + 80 + index * 40, topPos + RANGE_Y, 36, 20).build()));
+        }
+        for (HelperProfession profession : HelperProfession.values()) {
+            int index = profession.ordinal();
+            professionButtons.add(addRenderableWidget(Button.builder(Component.literal(trade(profession)),
+                    b -> press(HelperMenu.BUTTON_PROFESSION + profession.ordinal()))
+                    .bounds(leftPos + HelperMenu.LEFT + index % 4 * 70, topPos + MODES_Y + index / 4 * 24, 66, 20).build()));
+        }
+        expeditionButton = addRenderableWidget(Button.builder(Component.literal("Звичайний"), b -> press(HelperMenu.BUTTON_EXPEDITION))
+                .bounds(leftPos + HelperMenu.LEFT, topPos + 116, 100, 16).build());
+        expeditionButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal("Звичайний: уночі шукає дім. Похід: не йде додому через ніч.")));
+        selectTab(selectedTab);
+        updateButtons();
+    }
+
+    private void selectTab(final Tab tab) {
+        selectedTab = tab;
+        menu.setActionsTab(tab == Tab.ACTIONS);
+        movementTab.active = tab != Tab.MOVEMENT;
+        professionTab.active = tab != Tab.PROFESSIONS;
+        actionsTab.active = tab != Tab.ACTIONS;
+        expeditionButton.visible = tab == Tab.MOVEMENT;
+        roamButton.visible = stayButton.visible = followButton.visible = tab == Tab.MOVEMENT;
+        for (Button button : radiusButtons) button.visible = tab == Tab.MOVEMENT;
+        for (Button button : professionButtons) button.visible = tab == Tab.PROFESSIONS;
+        previousPage.visible = nextPage.visible = tab == Tab.ACTIONS;
+        updatePages();
+    }
+
+    private int pageCount() { return Math.max(1, (menu.actions().size() + PAGE_SIZE - 1) / PAGE_SIZE); }
+
+    private void changePage(final int delta) {
+        actionPage += delta;
+        updatePages();
+    }
+
+    private void updatePages() {
+        actionPage = Math.clamp(actionPage, 0, pageCount() - 1);
+        previousPage.active = actionPage > 0;
+        nextPage.active = actionPage + 1 < pageCount();
+    }
+
+    @Override
+    public boolean mouseScrolled(final double x, final double y, final double scrollX, final double scrollY) {
+        if (selectedTab == Tab.ACTIONS && x >= leftPos && x < leftPos + WIDTH
+                && y >= topPos + MODES_Y && y < topPos + HEIGHT && scrollY != 0) {
+            changePage(scrollY > 0 ? -1 : 1);
+            return true;
+        }
+        return super.mouseScrolled(x, y, scrollX, scrollY);
     }
 
     private void press(final int buttonId) {
@@ -75,16 +144,6 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         if (helper != null) {
             HelperNetwork.CHANNEL.send(new RenameHelper(helper.getId(), name), PacketDistributor.SERVER.noArg());
         }
-    }
-
-    private Component radiusLabel() {
-        NpcHelperEntity helper = menu.helper();
-        return Component.literal("Радіус: " + (helper == null ? 0 : helper.getRoamRadius()) + " блоків");
-    }
-
-    private Component professionLabel() {
-        NpcHelperEntity helper = menu.helper();
-        return Component.literal("Ремесло: " + trade(helper == null ? HelperProfession.NONE : helper.getProfession()));
     }
 
     private static String trade(final HelperProfession profession) {
@@ -107,6 +166,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         graphics.fill(x - 1, y - 1, x + WIDTH + 1, y + HEIGHT + 1, BORDER);
         graphics.fill(x, y, x + WIDTH, y + HEIGHT, PANEL);
         for (var slot : menu.slots) {
+            if (!slot.isActive()) continue;
             int sx = x + slot.x, sy = y + slot.y;
             graphics.fill(sx - 1, sy - 1, sx + 17, sy + 17, SLOT_FRAME);
             graphics.fill(sx, sy, sx + 16, sy + 16, SLOT_FACE);
@@ -115,28 +175,96 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
 
     @Override
     protected void extractLabels(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY) {
-        graphics.text(font, title, titleLabelX, titleLabelY, LABEL, false);
+        NpcHelperEntity helper = menu.helper();
+        String health = helper == null ? "" : String.format(java.util.Locale.ROOT, "Життя: %.1f / %.1f", helper.getHealth(), helper.getMaxHealth());
+        int healthX = WIDTH - HelperMenu.LEFT - font.width(health);
+        graphics.text(font, font.plainSubstrByWidth(title.getString(), Math.max(0, healthX - titleLabelX - 8)), titleLabelX, titleLabelY, LABEL, false);
+        if (helper != null) graphics.text(font, health, healthX, titleLabelY, helper.getHealth() < helper.getMaxHealth() ? 0xFFFF9999 : ACTIVE, false);
+        if (selectedTab == Tab.ACTIONS) {
+            extractActions(graphics);
+            return;
+        }
         graphics.text(font, playerInventoryTitle, inventoryLabelX, inventoryLabelY, LABEL, false);
         graphics.text(font, Component.literal("Спорядження"), HelperMenu.LEFT, HelperMenu.EQUIPMENT_Y - 12, LABEL, false);
         graphics.text(font, Component.literal("Сумка"), HelperMenu.LEFT, HelperMenu.BAG_Y - 12, LABEL, false);
 
-        NpcHelperEntity helper = menu.helper();
+        if (selectedTab == Tab.MOVEMENT) graphics.text(font, Component.literal("Радіус:"), HelperMenu.LEFT, RANGE_Y + 6, LABEL, false);
         if (helper == null) return;
-        graphics.text(font, Component.literal("Зараз: " + state(helper)), HelperMenu.LEFT, STATE_Y, ACTIVE, false);
+        String status = selectedTab == Tab.PROFESSIONS ? "Ремесло: " + trade(helper.getProfession()) : "Зараз: " + state(helper);
+        graphics.text(font, Component.literal(status), selectedTab == Tab.MOVEMENT ? 120 : HelperMenu.LEFT, STATE_Y, ACTIVE, false);
+    }
+
+    private void extractActions(final GuiGraphicsExtractor graphics) {
+        graphics.text(font, Component.literal("Ланцюжок дій: " + menu.actions().size()), HelperMenu.LEFT, 72, LABEL, false);
+        graphics.text(font, font.plainSubstrByWidth(menu.actionStatus(), 276), HelperMenu.LEFT, 88, ACTIVE, false);
+        var steps = menu.actions();
+        if (steps.isEmpty()) {
+            graphics.text(font, Component.literal("Черга порожня"), HelperMenu.LEFT, 114, LABEL, false);
+        }
+        for (int row = 0; row < PAGE_SIZE; row++) {
+            int index = actionPage * PAGE_SIZE + row;
+            if (index >= steps.size()) break;
+            var step = steps.get(index);
+            int y = 110 + row * 30;
+            int color = index == 0 ? ACTIVE : LABEL;
+            String label = (index + 1) + ". " + actionName(step);
+            graphics.text(font, font.plainSubstrByWidth(label, 276), HelperMenu.LEFT, y, color, false);
+            String progress = index == 0 ? "Зараз" : "Далі";
+            if (step.count() > 1 || step.type().equals(dev.npchelper.work.HelperStep.CRAFT)) {
+                progress += " · " + step.done() + " / " + step.count();
+                if (step.type().equals(dev.npchelper.work.HelperStep.CRAFT)) progress += " крафтів";
+            }
+            graphics.text(font, Component.literal(progress), HelperMenu.LEFT + 12, y + 12, color, false);
+        }
+        graphics.text(font, Component.literal((actionPage + 1) + " / " + pageCount()), 136, 306, LABEL, false);
+    }
+
+    private static String actionName(final dev.npchelper.work.HelperStep.View step) {
+        return switch (step.type()) {
+            case "prepare_grove" -> "Знайти або підготувати табличку «гай»";
+            case "prepare_axe" -> "Знайти або виготовити сокиру";
+            case "mark_grove" -> "Знайти дерево й поставити табличку";
+            case "bootstrap_wood" -> "Добути колоди для підготовки";
+            case "gather_wood" -> "Заготовити деревину";
+            case "gather_dirt" -> "Зібрати землю для сходинок";
+            case "craft" -> "Виготовити: " + itemName(step.item());
+            case "fetch" -> "Забрати зі сховища: " + itemName(step.item());
+            case "equip" -> "Взяти в руку: " + itemName(step.item());
+            case "store" -> "Віднести здобич у сховище";
+            case "take_bench" -> "Прибрати власний верстак";
+            case "recover_supports" -> "Прибрати власні земляні сходинки";
+            case "plant" -> "Посадити саджанець";
+            default -> "Інша дія: " + step.type();
+        };
+    }
+
+    private static String itemName(final String key) {
+        if (key.equals("#planks")) return "дошки";
+        if (key.equals("#signs")) return "таблички";
+        var item = dev.npchelper.work.HelperCrafting.item(key);
+        return item == null ? key : new net.minecraft.world.item.ItemStack(item).getHoverName().getString();
     }
 
     @Override
     public void containerTick() {
         super.containerTick();
-        radiusButton.setMessage(radiusLabel());
-        professionButton.setMessage(professionLabel());
+        updateButtons();
+        updatePages();
+    }
+
+    private void updateButtons() {
         NpcHelperEntity helper = menu.helper();
         if (helper == null) return;
+        expeditionButton.setMessage(Component.literal(helper.isExpedition() ? "Похід" : "Звичайний"));
         roamButton.active = helper.getMode() != HelperMode.ROAM;
         stayButton.active = helper.getMode() != HelperMode.STAY;
         followButton.active = helper.getMode() != HelperMode.FOLLOW;
-        // The range means the same in every mode now, so it is never greyed out.
-        radiusButton.active = true;
+        for (int index = 0; index < radiusButtons.size(); index++) {
+            radiusButtons.get(index).active = helper.getRoamRadius() != NpcHelperEntity.ROAM_RADII[index];
+        }
+        for (int index = 0; index < professionButtons.size(); index++) {
+            professionButtons.get(index).active = helper.getProfession().ordinal() != index;
+        }
     }
 
     private static String state(final NpcHelperEntity helper) {

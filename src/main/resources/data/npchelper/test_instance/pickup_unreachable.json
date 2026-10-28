@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:pickup_unreachable",
+  "environment": "minecraft:default",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 400
+}

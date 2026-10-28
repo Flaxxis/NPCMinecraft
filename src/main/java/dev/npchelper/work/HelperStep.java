@@ -7,6 +7,10 @@ import net.minecraft.world.level.storage.ValueOutput;
 public final class HelperStep {
     /** Fell logs until the count is in the bag. */
     public static final String GATHER_WOOD = "gather_wood";
+    public static final String PREPARE_GROVE = "prepare_grove";
+    public static final String PREPARE_AXE = "prepare_axe";
+    public static final String MARK_GROVE = "mark_grove";
+    public static final String BOOTSTRAP_WOOD = "bootstrap_wood";
     /** Make the item at a bench, setting one down and taking it back when none stands nearby. */
     public static final String CRAFT = "craft";
     /** Take the item out of a chest or barrel nearby. */
@@ -15,12 +19,20 @@ public final class HelperStep {
     public static final String EQUIP = "equip";
     /** Break the bench that was set down for the work and take it along. */
     public static final String TAKE_BENCH = "take_bench";
+    public static final String RECOVER_SUPPORTS = "recover_supports";
     /** Dig soil until the count is in the bag, for the steps the work needs. */
     public static final String GATHER_DIRT = "gather_dirt";
     /** Put a sapling in where the trunk stood. */
     public static final String PLANT = "plant";
     /** Carry what was gathered to a chest or barrel and leave it there. */
     public static final String STORE = "store";
+
+    /** Immutable menu snapshot; changes to the live step cannot mutate an already sent update. */
+    public record View(String type, String item, int count, int done) { }
+
+    public View view() {
+        return new View(type, item, count, done);
+    }
 
     private final String type;
     private final String item;
@@ -48,6 +60,8 @@ public final class HelperStep {
     public int done() {
         return done;
     }
+
+    public void reconcile(final int actual) { done = Math.max(0, actual); }
 
     public void progress() {
         done++;

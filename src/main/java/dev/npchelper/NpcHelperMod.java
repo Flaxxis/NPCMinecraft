@@ -54,6 +54,9 @@ public final class NpcHelperMod {
         ENTITY_TYPES.register(modBusGroup);
         MENUS.register(modBusGroup);
         HelperNetwork.register();
+        if (net.minecraftforge.gametest.ForgeGameTestHooks.isGametestEnabled()) {
+            dev.npchelper.gametest.HelperRegressionTests.register(modBusGroup);
+        }
 
         EntityAttributeCreationEvent.BUS.addListener(NpcHelperMod::createAttributes);
         BuildCreativeModeTabContentsEvent.BUS.addListener(NpcHelperMod::addCreative);

@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:iron_door",
+  "environment": "minecraft:default",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 400
+}

@@ -22,12 +22,21 @@ public final class HelperContainers {
     /** Every chest and barrel within the radius, nearest first. */
     public static List<BlockPos> around(final Level level, final BlockPos centre, final int radius) {
         List<BlockPos> found = new ArrayList<>();
-        BlockPos.betweenClosedStream(
-                centre.offset(-radius, -HEIGHT, -radius),
-                centre.offset(radius, HEIGHT, radius)
-        ).forEach(pos -> {
-            if (isStorage(level, pos)) found.add(pos.immutable());
-        });
+        if (!(level instanceof net.minecraft.server.level.ServerLevel server)) return found;
+        for (int x = (centre.getX() - radius) >> 4; x <= (centre.getX() + radius) >> 4; x++) {
+            for (int z = (centre.getZ() - radius) >> 4; z <= (centre.getZ() + radius) >> 4; z++) {
+                var chunk = server.getChunkSource().getChunkNow(x, z);
+                if (chunk == null) continue;
+                for (var entry : chunk.getBlockEntities().entrySet()) {
+                    BlockPos pos = entry.getKey();
+                    if (!(entry.getValue() instanceof ChestBlockEntity) && !(entry.getValue() instanceof BarrelBlockEntity)) continue;
+                    long dx = pos.getX() - centre.getX(), dz = pos.getZ() - centre.getZ();
+                    if (Math.abs(pos.getY() - centre.getY()) <= HEIGHT && dx * dx + dz * dz <= (long) radius * radius) {
+                        found.add(pos.immutable());
+                    }
+                }
+            }
+        }
         found.sort(Comparator.comparingDouble(pos -> pos.distSqr(centre)));
         return found;
     }
@@ -69,7 +78,11 @@ public final class HelperContainers {
     /** Takes the first matching stack out; empty when there was none. */
     public static ItemStack take(final Container container, final Predicate<ItemStack> wanted) {
         for (int slot = 0; slot < container.getContainerSize(); slot++) {
-            if (wanted.test(container.getItem(slot))) return container.removeItemNoUpdate(slot);
+            if (wanted.test(container.getItem(slot))) {
+                ItemStack taken = container.removeItemNoUpdate(slot);
+                container.setChanged();
+                return taken;
+            }
         }
         return ItemStack.EMPTY;
     }

@@ -16,8 +16,6 @@ public enum HelperMode {
 
     /** Never closer in than this, so following does not mean treading on the owner's heels. */
     public static final int MIN_DISTANCE = 2;
-    /** Staying put means a quarter of the chosen range, and never more than a few blocks of drift. */
-    public static final double STAY_SHARE = 0.25D;
 
     public String id() {
         return name().toLowerCase(Locale.ROOT);

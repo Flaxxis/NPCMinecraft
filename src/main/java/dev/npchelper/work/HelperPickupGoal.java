@@ -15,7 +15,8 @@ public final class HelperPickupGoal extends Goal {
 
     @Override
     public boolean canUse() {
-        return helper.getTarget() == null && helper.pickup().canChase();
+        return helper.getTarget() == null && !helper.mustReturnToOwner()
+                && !helper.supports().any() && helper.pickup().canChase();
     }
 
     @Override
@@ -30,6 +31,7 @@ public final class HelperPickupGoal extends Goal {
 
     @Override
     public void stop() {
+        helper.pickup().stopChase();
         helper.getNavigation().stop();
     }
 }

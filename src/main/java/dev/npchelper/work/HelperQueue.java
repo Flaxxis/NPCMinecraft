@@ -8,8 +8,8 @@ import net.minecraft.world.level.storage.ValueOutput;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The steps a helper is working through, one at a time. The queue survives a reload, and any order of the player — a change
- * of mode, of profession, or a fight — drops it, so an old plan never wakes up behind the player's back.
+ * The steps a helper is working through, one at a time. The queue survives a reload. A change of mode or profession
+ * replaces it; combat and pickup pause it without forgetting the active tree.
  */
 public final class HelperQueue {
     /** A step that has got nowhere in this long is given up, and the rest of the queue with it. */
@@ -17,6 +17,10 @@ public final class HelperQueue {
 
     private final Deque<HelperStep> steps = new ArrayDeque<>();
     private int ticksOnStep;
+
+    public List<HelperStep.View> snapshot() {
+        return steps.stream().map(HelperStep::view).toList();
+    }
 
     public boolean isEmpty() {
         return steps.isEmpty();
@@ -29,6 +33,12 @@ public final class HelperQueue {
     public void set(final List<HelperStep> plan) {
         clear();
         steps.addAll(plan);
+    }
+
+    /** Run preparation now, then return to the current saved step. */
+    public void prepend(final List<HelperStep> preparation) {
+        for (int index = preparation.size() - 1; index >= 0; index--) steps.addFirst(preparation.get(index));
+        ticksOnStep = 0;
     }
 
     public void clear() {

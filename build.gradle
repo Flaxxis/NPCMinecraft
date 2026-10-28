@@ -95,3 +95,11 @@ jar {
         ])
     }
 }
+
+// Regression tests are available in development runs, but never shipped in the mod JAR.
+jar {
+    exclude 'dev/npchelper/gametest/**'
+    exclude 'data/npchelper/test_instance/**'
+    exclude 'data/npchelper/test_environment/**'
+    exclude 'data/npchelper/structure/regression_arena.nbt'
+}

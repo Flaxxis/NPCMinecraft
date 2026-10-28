@@ -43,7 +43,7 @@ public final class HelperBreaking {
     }
 
     public boolean inReach(final BlockPos pos) {
-        return helper.position().distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D) <= REACH * REACH;
+        return helper.getEyePosition().distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D) <= REACH * REACH;
     }
 
     /** One tick of work on this block. True once it is gone. */
@@ -88,7 +88,10 @@ public final class HelperBreaking {
 
         // What it breaks falls on the ground and is picked up afterwards, as it would be for anyone.
         var drops = Block.getDrops(current, level, pos, level.getBlockEntity(pos), helper, hand);
-        level.destroyBlock(pos, false, helper);
+        if (!level.destroyBlock(pos, false, helper)) {
+            reset();
+            return false;
+        }
         pickup.drop(pos, drops);
         if (!hand.isEmpty()) hand.hurtAndBreak(1, helper, EquipmentSlot.MAINHAND);
         reset();

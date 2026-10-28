@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:night_wander_inside_16",
+  "environment": "npchelper:night",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 650
+}

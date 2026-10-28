@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:tool_from_logs",
+  "environment": "minecraft:default",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 100
+}

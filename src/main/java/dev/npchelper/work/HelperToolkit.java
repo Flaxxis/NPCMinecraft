@@ -46,8 +46,7 @@ public final class HelperToolkit {
     /** The tools a trade cannot work without, in the order they are seen to. */
     public static List<Tool> needs(final HelperProfession profession) {
         return switch (profession) {
-            // The shovel is for the dirt it carries to reach what it is felling.
-            case LUMBERJACK -> List.of(Tool.AXE, Tool.SHOVEL);
+            case LUMBERJACK -> List.of(Tool.AXE);
             case MINER -> List.of(Tool.PICKAXE, Tool.SHOVEL);
             default -> List.of();
         };

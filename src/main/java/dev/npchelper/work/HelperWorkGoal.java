@@ -20,21 +20,30 @@ import org.jspecify.annotations.Nullable;
  * and what it does there is the queue's. Fighting and collecting its own harvest both come first.
  */
 public final class HelperWorkGoal extends Goal {
-    /** How far past its own circle a helper looks for something to work on. */
-    private static final int SEARCH_MARGIN = 8;
     /** A chest for the harvest may stand this far off. */
-    private static final int STORE_RADIUS = 64;
+    private static final int STORE_RADIUS = 32;
+    private static final int STORE_SIGN_RADIUS = 64;
     private static final double SPEED = 1.0D;
 
     /** Felling a tree in order: the trunk, then the crown, then down off the steps, then a new sapling in. */
     private enum Phase { FELL, CROWN, RECOVER, PLANT }
 
     private final NpcHelperEntity helper;
+    private @Nullable HelperStep activeStep;
     private @Nullable BlockPos site;
     private @Nullable List<BlockPos> trunk;
     private @Nullable List<BlockPos> crown;
     private @Nullable BlockPos foot;
     private Phase phase = Phase.FELL;
+    private @Nullable BlockPos soilExit;
+    private final java.util.Set<BlockPos> soilProtected = new java.util.HashSet<>();
+    private String problem = "";
+    private final java.util.Map<BlockPos, Long> markerRetryAfter = new java.util.HashMap<>();
+    private long nextMarkerSearch;
+    private long markerLastProgress;
+    private double markerDistance = Double.MAX_VALUE;
+
+    public String problem() { return problem; }
 
     public HelperWorkGoal(final NpcHelperEntity helper) {
         this.helper = helper;
@@ -43,7 +52,8 @@ public final class HelperWorkGoal extends Goal {
 
     @Override
     public boolean canUse() {
-        return helper.getTarget() == null && !helper.queue().isEmpty() && helper.centre() != null;
+        return helper.getTarget() == null && !helper.mustReturnToOwner()
+                && !helper.queue().isEmpty() && helper.centre() != null;
     }
 
     @Override
@@ -61,11 +71,18 @@ public final class HelperWorkGoal extends Goal {
     @Override
     public void tick() {
         HelperStep step = helper.queue().current();
+        if (step != activeStep) {
+            resetTask();
+            activeStep = step;
+        }
         if (step == null || !helper.queue().tick()) return;
         if (!(helper.level() instanceof ServerLevel level)) return;
 
         switch (step.type()) {
-            case HelperStep.GATHER_WOOD -> gatherWood(level, step);
+            case HelperStep.GATHER_WOOD, HelperStep.BOOTSTRAP_WOOD -> gatherWood(level, step);
+            case HelperStep.PREPARE_GROVE -> prepareGrove(level);
+            case HelperStep.PREPARE_AXE -> prepareAxe();
+            case HelperStep.MARK_GROVE -> markGrove(level);
             case HelperStep.GATHER_DIRT -> gatherDirt(level, step);
             case HelperStep.PLANT -> plant(level, step);
             case HelperStep.STORE -> store(level, step);
@@ -73,17 +90,210 @@ public final class HelperWorkGoal extends Goal {
             case HelperStep.CRAFT -> craft(level, step);
             case HelperStep.EQUIP -> equip(step);
             case HelperStep.TAKE_BENCH -> takeBench(level);
+            case HelperStep.RECOVER_SUPPORTS -> {
+                if (!helper.supports().any()) helper.queue().advance();
+                else recoverSteps(level);
+            }
             default -> helper.queue().advance();
         }
+    }
+
+    /** A different order invalidates tree context; temporary pickup/combat interruptions do not. */
+    public void resetTask() {
+        helper.breaking().reset();
+        helper.getNavigation().stop();
+        activeStep = null;
+        site = null;
+        trunk = null;
+        crown = null;
+        foot = null;
+        phase = Phase.FELL;
+        soilExit = null;
+        soilProtected.clear();
+        problem = "";
+        markerRetryAfter.clear();
+        nextMarkerSearch = 0;
+        markerLastProgress = 0;
+        markerDistance = Double.MAX_VALUE;
+    }
+
+    public void store(final net.minecraft.world.level.storage.ValueOutput output) {
+        if (activeStep != helper.queue().current()) return;
+        if (soilExit != null) {
+            output.store("SoilExit", BlockPos.CODEC, soilExit);
+            var supports = output.childrenList("SoilProtected");
+            for (BlockPos pos : soilProtected) supports.addChild().store("Pos", BlockPos.CODEC, pos);
+        }
+        if (trunk == null || foot == null) return;
+        output.putString("Phase", phase.name());
+        output.store("Foot", BlockPos.CODEC, foot);
+        var logs = output.childrenList("Trunk");
+        for (BlockPos pos : trunk) logs.addChild().store("Pos", BlockPos.CODEC, pos);
+        var leaves = output.childrenList("Crown");
+        if (crown != null) for (BlockPos pos : crown) leaves.addChild().store("Pos", BlockPos.CODEC, pos);
+    }
+
+    public void load(final net.minecraft.world.level.storage.ValueInput input) {
+        resetTask();
+        HelperStep step = helper.queue().current();
+        if (step != null && step.type().equals(HelperStep.GATHER_DIRT)) {
+            soilExit = input.read("SoilExit", BlockPos.CODEC).orElse(helper.blockPosition());
+            for (var child : input.childrenListOrEmpty("SoilProtected")) child.read("Pos", BlockPos.CODEC).ifPresent(soilProtected::add);
+            activeStep = step;
+            return;
+        }
+        if (step == null || !(step.type().equals(HelperStep.GATHER_WOOD) || step.type().equals(HelperStep.BOOTSTRAP_WOOD))) return;
+        foot = input.read("Foot", BlockPos.CODEC).orElse(null);
+        if (foot == null) return;
+        trunk = new ArrayList<>();
+        for (var child : input.childrenListOrEmpty("Trunk")) child.read("Pos", BlockPos.CODEC).ifPresent(trunk::add);
+        crown = new ArrayList<>();
+        for (var child : input.childrenListOrEmpty("Crown")) child.read("Pos", BlockPos.CODEC).ifPresent(crown::add);
+        try { phase = Phase.valueOf(input.getStringOr("Phase", "FELL")); }
+        catch (IllegalArgumentException ignored) { phase = Phase.FELL; }
+        activeStep = step;
+    }
+
+    private void useTool(final HelperToolkit.Tool tool) {
+        ItemStack best = HelperToolkit.best(helper, tool);
+        if (!best.isEmpty()) helper.takeInHand(best.getItem());
+    }
+
+    // ---- lumberjack preparation ----
+
+    private @Nullable BlockPos grove(final ServerLevel level) {
+        return HelperSigns.nearest(level, helper.blockPosition(), helper.workRadius() + 32, HelperSigns.Mark.GROVE);
+    }
+
+    private void prepareGrove(final ServerLevel level) {
+        if (grove(level) != null || HelperSigns.hasSign(helper.getBag())) {
+            helper.queue().advance();
+            return;
+        }
+        boolean bench = HelperCrafting.findBench(helper) != null;
+        boolean carriedBench = helper.getBag().countItem(net.minecraft.world.item.Items.CRAFTING_TABLE) > 0;
+        int logs = 0;
+        List<ItemStack> carried = new ArrayList<>();
+        for (int slot = 0; slot < helper.getBag().getContainerSize(); slot++) {
+            ItemStack stack = helper.getBag().getItem(slot);
+            carried.add(stack);
+            if (stack.is(ItemTags.LOGS)) logs += stack.getCount();
+        }
+        var plan = HelperObtain.plan(level, carried, bench, net.minecraft.world.item.Items.OAK_SIGN, 1);
+        boolean needsWood = plan.steps().stream().anyMatch(step -> step.type().equals(HelperStep.GATHER_WOOD));
+        if (!bench && !carriedBench && logs < 5 && needsWood) {
+            helper.queue().prepend(List.of(new HelperStep(HelperStep.BOOTSTRAP_WOOD, "", 5)));
+            return;
+        }
+        if (plan.refused() || plan.steps().isEmpty()) helper.queue().clear();
+        else helper.queue().prepend(plan.steps());
+    }
+
+    private void prepareAxe() {
+        var plan = HelperTrades.prepareAxe(helper);
+        if (plan.isEmpty()) helper.queue().clear();
+        else {
+            helper.queue().advance();
+            helper.queue().prepend(plan);
+        }
+    }
+
+    private void markGrove(final ServerLevel level) {
+        if (grove(level) != null) { helper.queue().advance(); return; }
+        if (!HelperSigns.hasSign(helper.getBag())) {
+            helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_GROVE, "", 1)));
+            return;
+        }
+        long now = level.getGameTime();
+        if (site != null && !HelperSigns.canPlace(level, site)) rejectMarker(now);
+        if (site == null) {
+            if (now < nextMarkerSearch) return;
+            nextMarkerSearch = now + 40;
+            site = findMarkerSite(level);
+            markerDistance = Double.MAX_VALUE;
+            markerLastProgress = now;
+            if (site == null) {
+                problem = "Немає дерева з доступним місцем для таблички";
+                return;
+            }
+        }
+        problem = "";
+        if (helper.breaking().inReach(site)) {
+            helper.getNavigation().stop();
+            if (HelperSigns.place(level, helper.getBag(), site, HelperSigns.Mark.GROVE)) {
+                helper.queue().noteProgress();
+                helper.queue().advance();
+            } else rejectMarker(now);
+            return;
+        }
+        double distance = site.distToCenterSqr(helper.position());
+        if (distance + 0.1D < markerDistance) {
+            markerDistance = distance;
+            markerLastProgress = now;
+            helper.queue().noteProgress();
+        }
+        if (now - markerLastProgress > 60) {
+            rejectMarker(now);
+            problem = "Не можу дійти — шукаю інше місце для таблички";
+            return;
+        }
+        if (helper.getNavigation().isDone() || helper.getNavigation().isStuck()) {
+            if (!helper.getNavigation().moveTo(site.getX() + 0.5D, site.getY(), site.getZ() + 0.5D, 0, SPEED)) rejectMarker(now);
+        }
+    }
+
+    private void rejectMarker(final long now) {
+        if (site != null) markerRetryAfter.put(site, now + 100);
+        site = null;
+        nextMarkerSearch = 0;
+        helper.getNavigation().stop();
+    }
+
+    private @Nullable BlockPos findMarkerSite(final ServerLevel level) {
+        Vec3 centre = helper.workCentre();
+        if (centre == null) return null;
+        var logs = HelperTreeSearch.find(level, BlockPos.containing(centre), helper.workRadius());
+        var columns = new java.util.HashSet<BlockPos>();
+        for (BlockPos log : logs) {
+            if (!columns.add(new BlockPos(log.getX(), 0, log.getZ()))) continue;
+            if (columns.size() > 16) break;
+            List<BlockPos> candidates = new ArrayList<>();
+            int low = Math.min(log.getY(), helper.getBlockY()) - 3;
+            int high = Math.max(log.getY(), helper.getBlockY()) + 3;
+            for (int radius = 2; radius <= 4; radius++) {
+                for (int y = low; y <= high; y++) for (int dx = -radius; dx <= radius; dx++) for (int dz = -radius; dz <= radius; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+                    BlockPos pos = new BlockPos(log.getX() + dx, y, log.getZ() + dz);
+                    if (markerRetryAfter.getOrDefault(pos, 0L) > level.getGameTime()) continue;
+                    if (!HelperSigns.canPlace(level, pos) || level.getBlockState(pos.below()).is(BlockTags.LOGS)) continue;
+                    candidates.add(pos);
+                }
+            }
+            candidates.sort(java.util.Comparator.comparingDouble(pos -> pos.distToCenterSqr(helper.position())));
+            for (BlockPos pos : candidates) {
+                if (helper.breaking().inReach(pos)) return pos;
+                var path = helper.getNavigation().createPath(pos, 0);
+                if (path != null && path.canReach()) return pos;
+            }
+        }
+        return null;
     }
 
     // ---- felling ----
 
     private void gatherWood(final ServerLevel level, final HelperStep step) {
+        useTool(HelperToolkit.Tool.AXE);
+        step.reconcile(helper.carriedLogs());
+        if (step.finished() && (trunk == null || step.type().equals(HelperStep.BOOTSTRAP_WOOD))) {
+            helper.queue().advance();
+            resetTask();
+            return;
+        }
         if (trunk == null) {
             BlockPos first = findLog(level);
             if (first == null) {
-                helper.queue().clear();
+                if (step.type().equals(HelperStep.BOOTSTRAP_WOOD)) helper.queue().clear();
+                else helper.queue().advance();
                 return;
             }
             trunk = HelperTree.trunk(level, first);
@@ -93,7 +303,14 @@ public final class HelperWorkGoal extends Goal {
         }
 
         switch (phase) {
-            case FELL -> fellTrunk(level, step);
+            case FELL -> {
+                fellTrunk(level, step);
+                if (step.type().equals(HelperStep.BOOTSTRAP_WOOD) && step.finished()) {
+                    // Bootstrap needs five logs, not a whole tree before an axe and marker exist.
+                    helper.queue().advance();
+                    resetTask();
+                }
+            }
             case CROWN -> clearCrown(level);
             case RECOVER -> recoverSteps(level);
             case PLANT -> {
@@ -115,7 +332,14 @@ public final class HelperWorkGoal extends Goal {
         }
         // Too high to reach: a step of its own dirt goes down first.
         if (HelperSupports.outOfReach(helper, log) && !helper.breaking().inReach(log)) {
-            if (!approach(log) && !helper.supports().step(level, log)) phase = Phase.CROWN;
+            double dx = helper.getX() - (log.getX() + 0.5D), dz = helper.getZ() - (log.getZ() + 0.5D);
+            if (dx * dx + dz * dz > 6.25D) {
+                approach(new BlockPos(log.getX(), helper.blockPosition().getY(), log.getZ()));
+                return;
+            }
+            if (!helper.getNavigation().isDone() && !helper.getNavigation().isStuck()) return;
+            if (helper.supports().step(level, log)) helper.queue().noteProgress();
+            else phase = Phase.CROWN;
             return;
         }
         if (!helper.breaking().inReach(log)) {
@@ -126,7 +350,6 @@ public final class HelperWorkGoal extends Goal {
         if (!helper.breaking().tick(log)) return;
 
         helper.queue().noteProgress();
-        step.progress();
     }
 
     /** The crown is taken down for its saplings; nothing is built to reach it. */
@@ -163,21 +386,106 @@ public final class HelperWorkGoal extends Goal {
     // ---- the other steps ----
 
     private void gatherDirt(final ServerLevel level, final HelperStep step) {
-        if (site == null || !isSoil(level, site)) site = findSoil(level);
-        if (site == null) {
-            helper.queue().advance();
+        if (soilExit == null) soilExit = helper.blockPosition();
+        soilProtected.add(soilExit.below());
+        var escape = dev.npchelper.entity.HelperNavigation.probe(helper, soilExit, 0);
+        if (escape == null || !escape.canReach()) {
+            problem = "Немає безпечного шляху з виїмки — копання зупинено";
+            helper.breaking().reset();
             return;
         }
+        protectSoilRoute(escape);
+        int soil = 0;
+        for (int slot = 0; slot < helper.getBag().getContainerSize(); slot++) {
+            ItemStack stack = helper.getBag().getItem(slot);
+            if (stack.is(ItemTags.DIRT)) soil += stack.getCount();
+        }
+        if (soil >= step.count()) { finishSoil(level); return; }
+        useTool(HelperToolkit.Tool.SHOVEL);
+        // Pickup can move the NPC after selecting a block: recheck safety at the actual swing, too.
+        if (site == null || !safeSoil(level, site) || reachableSoilTread(level, site) == null) {
+            helper.breaking().reset();
+            site = findSoil(level);
+        }
+        if (site == null) { finishSoil(level); return; }
         if (!helper.breaking().inReach(site)) {
-            approach(site);
+            BlockPos tread = reachableSoilTread(level, site);
+            if (tread != null) approach(tread);
             return;
         }
+        BlockPos tread = reachableSoilTread(level, site);
+        if (tread == null) { site = null; return; }
+        var treadPath = dev.npchelper.entity.HelperNavigation.probe(helper, tread, 0);
+        if (treadPath != null) protectSoilRoute(treadPath);
         helper.getNavigation().stop();
         if (!helper.breaking().tick(site)) return;
         site = null;
         helper.queue().noteProgress();
         step.progress();
-        if (step.finished()) helper.queue().advance();
+    }
+
+    private void finishSoil(final ServerLevel level) {
+        helper.breaking().reset();
+        site = null;
+        if (soilExit != null && (helper.getBlockY() < soilExit.getY() || soilExit.distToCenterSqr(helper.position()) > 2.25D)) {
+            var path = dev.npchelper.entity.HelperNavigation.probe(helper, soilExit, 0);
+            if (path != null && path.canReach()) {
+                problem = "Повертається східцями з виїмки";
+                if (helper.getNavigation().isDone() || helper.getNavigation().isStuck()) helper.getNavigation().moveTo(path, SPEED);
+                return;
+            }
+            problem = "Вихід із виїмки заблокований";
+            return;
+        }
+        problem = "";
+        helper.queue().advance();
+    }
+
+    /** Every dug cell has a floor and an adjacent, reachable tread exactly one block higher. */
+    private boolean safeSoil(final ServerLevel level, final BlockPos pos) {
+        if (!level.hasChunkAt(pos) || !isSoil(level, pos)) return false;
+        if (soilProtected.contains(pos) || pos.equals(helper.blockPosition().below()) || (soilExit != null && pos.equals(soilExit.below()))) return false;
+        if (soilExit != null && pos.getY() < soilExit.getY() - 5) return false;
+        var above = level.getBlockState(pos.above());
+        if (!(above.isAir() || above.canBeReplaced()) || !above.getFluidState().isEmpty()) return false;
+        if (!level.getBlockState(pos.below()).isSolid() || HelperBuildings.nearCrafted(level, pos)) return false;
+        if (!clearHeadspace(level, pos.above(2))) return false;
+        for (var side : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            for (int rise = 0; rise <= 1; rise++) {
+                if (dev.npchelper.entity.HelperShelter.standable(level, pos.relative(side).above(rise))) return true;
+            }
+        }
+        return false;
+    }
+
+    private void protectSoilRoute(final net.minecraft.world.level.pathfinder.Path path) {
+        for (int index = 0; index < path.getNodeCount(); index++) {
+            var node = path.getNode(index);
+            soilProtected.add(new BlockPos(node.x, node.y - 1, node.z));
+        }
+    }
+
+    private @Nullable BlockPos reachableSoilTread(final ServerLevel level, final BlockPos pos) {
+        for (var side : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+            for (int rise = 0; rise <= 1; rise++) {
+                BlockPos tread = pos.relative(side).above(rise);
+                if (!dev.npchelper.entity.HelperShelter.standable(level, tread)) continue;
+                var path = dev.npchelper.entity.HelperNavigation.probe(helper, tread, 0);
+                if (path == null || !path.canReach()) continue;
+                boolean supported = true;
+                for (int index = 0; index < path.getNodeCount(); index++) {
+                    var node = path.getNode(index);
+                    if (pos.equals(new BlockPos(node.x, node.y - 1, node.z))) { supported = false; break; }
+                }
+                if (supported) return tread;
+            }
+        }
+        return null;
+    }
+
+    private boolean clearHeadspace(final ServerLevel level, final BlockPos pos) {
+        var state = level.getBlockState(pos);
+        return state.getFluidState().isEmpty() && (state.isAir() || state.canBeReplaced());
     }
 
     private void plant(final ServerLevel level, final HelperStep step) {
@@ -188,7 +496,12 @@ public final class HelperWorkGoal extends Goal {
     /** Carries the harvest to a chest or barrel with room in it. */
     private void store(final ServerLevel level, final HelperStep step) {
         if (site == null || HelperContainers.containerAt(level, site) == null) {
-            site = HelperContainers.findWithRoom(level, helper.blockPosition(), STORE_RADIUS);
+            site = null;
+            for (BlockPos sign : HelperSigns.around(level, helper.blockPosition(), STORE_SIGN_RADIUS, HelperSigns.Mark.STORE)) {
+                site = HelperContainers.findWithRoom(level, sign, 8);
+                if (site != null) break;
+            }
+            if (site == null) site = HelperContainers.findWithRoom(level, helper.blockPosition(), STORE_RADIUS);
         }
         if (site == null) {
             helper.queue().advance();
@@ -242,7 +555,13 @@ public final class HelperWorkGoal extends Goal {
         var container = HelperContainers.containerAt(level, site);
         if (container != null) {
             var taken = HelperContainers.take(container, stack -> stack.is(wanted));
-            if (!taken.isEmpty()) helper.getBag().addItem(taken);
+            if (!taken.isEmpty()) {
+                ItemStack left = helper.getBag().addItem(taken);
+                if (!left.isEmpty()) {
+                    ItemStack overflow = HelperContainers.put(container, left);
+                    if (!overflow.isEmpty()) helper.pickup().drop(site, List.of(overflow));
+                }
+            }
         }
         site = null;
         helper.queue().noteProgress();
@@ -250,24 +569,30 @@ public final class HelperWorkGoal extends Goal {
     }
 
     private void craft(final ServerLevel level, final HelperStep step) {
-        var wanted = HelperCrafting.item(step.item());
-        if (wanted == null) {
-            helper.queue().advance();
+        if (site != null && !level.getBlockState(site).is(Blocks.CRAFTING_TABLE)) site = null;
+        if (site == null) site = HelperCrafting.findBench(helper);
+        if (site != null && !HelperCrafting.withinBenchReach(helper, site)) {
+            approach(site);
             return;
         }
-        boolean bench = HelperCrafting.benchNearby(level, helper.blockPosition());
-        switch (HelperCrafting.craft(level, helper.getBag(), wanted, bench)) {
+        switch (HelperCrafting.craft(level, helper.getBag(), step.item(), site != null)) {
             case DONE -> {
                 helper.queue().noteProgress();
                 step.progress();
                 if (step.finished()) helper.queue().advance();
             }
             case NEEDS_BENCH -> {
-                var placed = HelperCrafting.placeBench(level, helper.blockPosition());
+                // The planner supplies a real table; placing it spends that item.
+                var placed = HelperCrafting.placeBench(level, helper.getBag(), helper.blockPosition());
                 if (placed == null) helper.queue().clear();
-                else helper.setPlacedBench(placed);
+                else {
+                    helper.setPlacedBench(placed);
+                    site = placed;
+                    helper.queue().noteProgress();
+                }
             }
             case NO_MATERIALS, NO_RECIPE -> helper.queue().clear();
+            case NO_ROOM -> { /* Wait without consuming ingredients; the player can free bag space. */ }
         }
     }
 
@@ -337,7 +662,9 @@ public final class HelperWorkGoal extends Goal {
     }
 
     private boolean isSoil(final ServerLevel level, final BlockPos pos) {
-        return level.getBlockState(pos).is(BlockTags.DIRT);
+        var state = level.getBlockState(pos);
+        return state.is(BlockTags.DIRT) || state.is(Blocks.GRASS_BLOCK)
+                || state.is(Blocks.PODZOL) || state.is(Blocks.MYCELIUM);
     }
 
     /** Bare soil near the work, never from under what is standing on it. */
@@ -347,18 +674,19 @@ public final class HelperWorkGoal extends Goal {
         BlockPos middle = BlockPos.containing(centre);
         List<BlockPos> candidates = new ArrayList<>();
         for (BlockPos pos : BlockPos.betweenClosed(middle.offset(-12, -4, -12), middle.offset(12, 4, 12))) {
-            if (!isSoil(level, pos) || !level.getBlockState(pos.above()).isAir()) continue;
-            if (HelperBuildings.nearCrafted(level, pos)) continue;
-            candidates.add(pos.immutable());
+            if (safeSoil(level, pos)) candidates.add(pos.immutable());
         }
-        return candidates.stream().min(java.util.Comparator.comparingDouble(pos -> pos.distToCenterSqr(helper.position())))
-                .orElse(null);
+        candidates.sort(java.util.Comparator.comparingDouble(pos -> pos.distToCenterSqr(helper.position())));
+        for (BlockPos pos : candidates) {
+            if (reachableSoilTread(level, pos) != null) return pos;
+        }
+        return null;
     }
 
     private @Nullable BlockPos findLog(final ServerLevel level) {
         Vec3 centre = helper.workCentre();
         if (centre == null) return null;
-        var logs = HelperTreeSearch.find(level, BlockPos.containing(centre), helper.workRadius() + SEARCH_MARGIN);
+        var logs = HelperTreeSearch.find(level, BlockPos.containing(centre), helper.workRadius());
         return logs.isEmpty() ? null : logs.getFirst();
     }
 }

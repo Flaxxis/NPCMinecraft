@@ -35,15 +35,26 @@ public final class HelperTrades {
         List<HelperStep> plan = new ArrayList<>();
         if (!(helper.level() instanceof ServerLevel level)) return plan;
 
-        for (HelperToolkit.Tool tool : HelperToolkit.needs(profession)) {
-            addTool(level, helper, tool, plan);
-        }
+        if (helper.supports().any()) plan.add(new HelperStep(HelperStep.RECOVER_SUPPORTS, "", 1));
+        if (helper.placedBench() != null) plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
         if (profession == HelperProfession.LUMBERJACK) {
-            // The dirt comes first: without it the crown of a tall tree is out of reach.
+            // Resolve each preparation stage from the real inventory left by the previous one.
+            plan.add(new HelperStep(HelperStep.PREPARE_GROVE, "", 1));
+            plan.add(new HelperStep(HelperStep.PREPARE_AXE, "", 1));
+            plan.add(new HelperStep(HelperStep.MARK_GROVE, "", 1));
             plan.add(new HelperStep(HelperStep.GATHER_DIRT, "", HelperSupports.CARRY));
             plan.add(new HelperStep(HelperStep.GATHER_WOOD, "", WOOD_LOAD));
             plan.add(new HelperStep(HelperStep.STORE, "", 1));
+        } else {
+            for (HelperToolkit.Tool tool : HelperToolkit.needs(profession)) addTool(level, helper, tool, plan);
         }
+        if (!plan.isEmpty()) plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
+        return plan;
+    }
+
+    public static List<HelperStep> prepareAxe(final NpcHelperEntity helper) {
+        List<HelperStep> plan = new ArrayList<>();
+        if (helper.level() instanceof ServerLevel level) addTool(level, helper, HelperToolkit.Tool.AXE, plan);
         return plan;
     }
 
@@ -68,12 +79,12 @@ public final class HelperTrades {
         var plain = tool.plainest();
         var carriedStacks = new ArrayList<ItemStack>();
         for (int slot = 0; slot < helper.getBag().getContainerSize(); slot++) carriedStacks.add(helper.getBag().getItem(slot));
-        boolean bench = HelperCrafting.benchNearby(level, helper.blockPosition());
+        boolean bench = HelperCrafting.findBench(helper) != null || plan.stream().anyMatch(step ->
+                step.type().equals(HelperStep.CRAFT) && step.item().equals("minecraft:crafting_table"));
 
         HelperObtain.Plan obtained = HelperObtain.plan(level, carriedStacks, bench, plain, 1);
         if (obtained.refused()) return;
         plan.addAll(obtained.steps());
-        if (!bench) plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
         plan.add(new HelperStep(HelperStep.EQUIP, HelperObtain.key(plain), 1));
     }
 

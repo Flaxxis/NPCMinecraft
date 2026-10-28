@@ -27,8 +27,8 @@ public final class HelperPickup {
     private static final String HARVESTER = "npchelper:harvester";
     /** A drop has this long to come to rest before «there is no way to it» is believed. */
     private static final int SETTLE = 40;
-    /** Given up from one spot only: this far away it is worth another try. */
-    private static final double SECOND_CHANCE = 4.0D;
+    /** Unreachable loot is retried after a pause rather than after every small wander. */
+    private static final int RETRY_DELAY = 20 * 30;
     private static final int GIVE_UP_AFTER = 3;
     /** Vanilla can merge our drop into an older stack with another id, so the ground is swept now and then. */
     private static final int RESCAN_RADIUS = 24;
@@ -37,7 +37,7 @@ public final class HelperPickup {
     private final Set<UUID> pending = new HashSet<>();
     private final Map<UUID, Long> born = new HashMap<>();
     private final Map<UUID, Integer> attempts = new HashMap<>();
-    private final Map<UUID, BlockPos> gaveUpAt = new HashMap<>();
+    private final Map<UUID, Long> retryAfter = new HashMap<>();
 
     private @Nullable ItemEntity chasing;
     private double bestDistance = Double.MAX_VALUE;
@@ -72,7 +72,7 @@ public final class HelperPickup {
     public void tick() {
         if (!(helper.level() instanceof ServerLevel level)) return;
         if (helper.tickCount % 20 == 0) rediscover(level);
-        pending.removeIf(id -> gone(level, id));
+        for (UUID id : Set.copyOf(pending)) if (gone(level, id)) forget(id);
 
         for (UUID id : Set.copyOf(pending)) {
             if (!(level.getEntity(id) instanceof ItemEntity item) || item.hasPickUpDelay()) continue;
@@ -107,6 +107,11 @@ public final class HelperPickup {
             lastProgress = level.getGameTime();
         }
         if (chasing == null) return;
+        if (!helper.getBag().canAddItem(chasing.getItem())) {
+            stopChase();
+            helper.getNavigation().stop();
+            return;
+        }
 
         helper.getLookControl().setLookAt(chasing.getX(), chasing.getY(), chasing.getZ());
         if (touches(helper.position(), chasing)) {
@@ -122,7 +127,7 @@ public final class HelperPickup {
         // Standing still for too long: this drop is set aside rather than chased forever.
         if (level.getGameTime() - lastProgress > 60L) {
             UUID id = chasing.getUUID();
-            if (attempts.merge(id, 1, Integer::sum) >= GIVE_UP_AFTER) gaveUpAt.put(id, helper.blockPosition());
+            if (attempts.merge(id, 1, Integer::sum) >= GIVE_UP_AFTER) retryAfter.put(id, level.getGameTime() + RETRY_DELAY);
             chasing = null;
             helper.getNavigation().stop();
             return;
@@ -132,24 +137,43 @@ public final class HelperPickup {
         }
     }
 
+    public boolean isChasing() { return chasing != null && chasing.isAlive(); }
+
+    public boolean waitingForSpace() {
+        if (!(helper.level() instanceof ServerLevel level)) return false;
+        return pending.stream().anyMatch(id -> level.getEntity(id) instanceof ItemEntity item
+                && item.isAlive() && !helper.getBag().canAddItem(item.getItem()));
+    }
+
+    public boolean hasDeferredDrops() {
+        return helper.level() instanceof ServerLevel level
+                && retryAfter.values().stream().anyMatch(time -> time > level.getGameTime());
+    }
+
+    public void stopChase() { chasing = null; }
+
     public void cancel() {
         chasing = null;
         pending.clear();
         born.clear();
         attempts.clear();
-        gaveUpAt.clear();
+        retryAfter.clear();
     }
 
     private @Nullable ItemEntity nextTarget(final ServerLevel level) {
         List<ItemEntity> candidates = new ArrayList<>();
         for (UUID id : pending) {
             if (!(level.getEntity(id) instanceof ItemEntity item) || !item.isAlive() || item.hasPickUpDelay()) continue;
-            BlockPos from = gaveUpAt.get(id);
-            if (from != null) {
-                // Given up from one spot only: from far enough away it gets another chance.
-                if (helper.blockPosition().distSqr(from) < SECOND_CHANCE * SECOND_CHANCE) continue;
-                gaveUpAt.remove(id);
-                attempts.remove(id);
+            if (!helper.getBag().canAddItem(item.getItem()) || helper.distanceToSqr(item) > RESCAN_RADIUS * RESCAN_RADIUS) continue;
+            if (retryAfter.getOrDefault(id, 0L) > level.getGameTime()) continue;
+            if (!touches(helper.position(), item)) {
+                var path = helper.getNavigation().createPath(item.blockPosition(), 0);
+                if (path == null || !path.canReach()) {
+                    if (level.getGameTime() - born.getOrDefault(id, 0L) >= SETTLE) {
+                        retryAfter.put(id, level.getGameTime() + RETRY_DELAY);
+                    }
+                    continue;
+                }
             }
             candidates.add(item);
         }
@@ -185,6 +209,6 @@ public final class HelperPickup {
         pending.remove(id);
         born.remove(id);
         attempts.remove(id);
-        gaveUpAt.remove(id);
+        retryAfter.remove(id);
     }
 }

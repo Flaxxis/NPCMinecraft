@@ -8,11 +8,11 @@ import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.SimpleChannel;
 
 /**
- * One message: the name typed in the helper's interface. The mode buttons ride the vanilla menu-button packet, so nothing
- * else needs a channel of its own.
+ * Names travel to the server; queue snapshots travel only to the player viewing a helper's menu.
+ * The mode and profession buttons use the vanilla menu-button packet.
  */
 public final class HelperNetwork {
-    private static final int PROTOCOL = 1;
+    private static final int PROTOCOL = 3;
 
     public static final SimpleChannel CHANNEL = ChannelBuilder
             .named(Identifier.fromNamespaceAndPath(NpcHelperMod.MODID, "main"))
@@ -37,6 +37,11 @@ public final class HelperNetwork {
                         helper.rename(message.name());
                     }
                 })
+                .add();
+        CHANNEL.messageBuilder(HelperActions.class, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(HelperActions::encode)
+                .decoder(HelperActions::decode)
+                .consumerMainThread((message, context) -> dev.npchelper.client.NpcHelperClient.receiveActions(message))
                 .add();
     }
 }

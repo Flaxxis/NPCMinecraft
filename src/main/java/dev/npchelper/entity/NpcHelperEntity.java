@@ -69,6 +69,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private static final EntityDataAccessor<Integer> DATA_ROAM_RADIUS = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.INT);
 
+    private static final EntityDataAccessor<Boolean> DATA_EXPEDITION = SynchedEntityData.defineId(
+            NpcHelperEntity.class, EntityDataSerializers.BOOLEAN);
+    private HelperNightGoal nightGoal;
+    private final HelperPassages passages = new HelperPassages(this);
+    private final HelperEating eating = new HelperEating(this);
+
     private final SimpleContainer bag = new SimpleContainer(BAG_SIZE);
     private final dev.npchelper.work.HelperPickup pickup = new dev.npchelper.work.HelperPickup(this);
     private final dev.npchelper.work.HelperBreaking breaking = new dev.npchelper.work.HelperBreaking(this, pickup);
@@ -76,6 +82,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private final dev.npchelper.work.HelperSupports supports = new dev.npchelper.work.HelperSupports(this);
     /** Ticks before a finished trade looks for the next job of its own. */
     private int restTicks;
+    private dev.npchelper.work.HelperWorkGoal workGoal;
     /** The spot the helper keeps to in every mode but FOLLOW. */
     private BlockPos anchor = BlockPos.ZERO;
     /** While this has not run out, the helper keeps to the owner whatever its mode says. */
@@ -99,6 +106,21 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         getNavigation().setCanFloat(true);
     }
 
+    @Override
+    protected net.minecraft.world.entity.ai.navigation.PathNavigation createNavigation(final Level level) {
+        return new HelperNavigation(this, level);
+    }
+
+    public HelperEating eating() { return eating; }
+    public HelperPassages passages() { return passages; }
+    public String workProblem() { return workGoal.problem(); }
+    public HelperNightGoal nightGoal() { return nightGoal; }
+    public boolean isExpedition() { return entityData.get(DATA_EXPEDITION); }
+    public void setExpedition(final boolean expedition) {
+        entityData.set(DATA_EXPEDITION, expedition);
+        getNavigation().stop();
+    }
+
     public static AttributeSupplier.Builder createAttributes() {
         return PathfinderMob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, 20.0D)
@@ -117,6 +139,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void defineSynchedData(final SynchedEntityData.Builder entityData) {
         super.defineSynchedData(entityData);
         entityData.define(DATA_OWNER, Optional.empty());
+        entityData.define(DATA_EXPEDITION, false);
         entityData.define(DATA_MODE, HelperMode.ROAM.id());
         entityData.define(DATA_PROFESSION, HelperProfession.NONE.id());
         entityData.define(DATA_ROAM_RADIUS, ROAM_RADII[1]);
@@ -126,8 +149,11 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void registerGoals() {
         goalSelector.addGoal(0, new FloatGoal(this));
         goalSelector.addGoal(1, new MeleeAttackGoal(this, 1.1D, true));
+        nightGoal = new HelperNightGoal(this);
+        goalSelector.addGoal(2, nightGoal);
         goalSelector.addGoal(3, new dev.npchelper.work.HelperPickupGoal(this));
-        goalSelector.addGoal(4, new dev.npchelper.work.HelperWorkGoal(this));
+        workGoal = new dev.npchelper.work.HelperWorkGoal(this);
+        goalSelector.addGoal(4, workGoal);
         goalSelector.addGoal(5, new HelperWanderGoal(this));
         goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
         goalSelector.addGoal(7, new RandomLookAroundGoal(this));
@@ -143,7 +169,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
      * walking up to one and hitting it is how a house gets a crater in it.
      */
     public boolean mayFight(final @Nullable LivingEntity candidate) {
-        if (candidate == null || candidate == this || !candidate.isAlive()) return false;
+        if (isRetreating() || candidate == null || candidate == this || !candidate.isAlive()) return false;
         if (candidate instanceof NpcHelperEntity) return false;
         if (candidate instanceof Player player) return !isOwnedBy(player);
         return !(candidate instanceof net.minecraft.world.entity.monster.Creeper);
@@ -152,7 +178,12 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     /** Right-click with an empty hand opens the helper's own interface. */
     @Override
     public InteractionResult mobInteract(final Player player, final InteractionHand hand) {
-        if (!player.getItemInHand(hand).isEmpty()) return super.mobInteract(player, hand);
+        if (!player.getItemInHand(hand).isEmpty()) {
+            if (level().isClientSide() && getHealth() < getMaxHealth()
+                    && player.getItemInHand(hand).has(net.minecraft.core.component.DataComponents.FOOD)) return InteractionResult.SUCCESS;
+            if (eating.feed(player, hand)) return InteractionResult.SUCCESS;
+            return super.mobInteract(player, hand);
+        }
         if (player instanceof ServerPlayer serverPlayer) {
             serverPlayer.openMenu(
                     new SimpleMenuProvider((containerId, inventory, ignored) -> new HelperMenu(containerId, inventory, this),
@@ -167,9 +198,17 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         super.customServerAiStep(level);
         if (retreatTicks > 0) retreatTicks--;
         pickup.tick();
+        eating.tick();
+        passages.tick();
+        // A cancelled job may leave a scaffold but no queue. Descend before night travel can take over.
+        if (queue.isEmpty() && supports.any() && nightGoal.wanted()) {
+            queue.set(java.util.List.of(new dev.npchelper.work.HelperStep(
+                    dev.npchelper.work.HelperStep.RECOVER_SUPPORTS, "", 1)));
+        }
 
         // A trade with nothing left in the queue takes a breath and then looks for the next job of its own.
-        if (queue.isEmpty() && getProfession() != HelperProfession.NONE && getTarget() == null) {
+        if (queue.isEmpty() && (getProfession() != HelperProfession.NONE || supports.any() || placedBench != null)
+                && getTarget() == null && !mustReturnToOwner() && !nightGoal.wanted()) {
             if (++restTicks > REST_TICKS) {
                 restTicks = 0;
                 queue.set(dev.npchelper.work.HelperTrades.planFor(this, getProfession()));
@@ -182,9 +221,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         if (target == null) return;
 
         // Hurt badly: break off and keep to the owner until it has had a moment.
-        if (getHealth() < getMaxHealth() * RETREAT_HEALTH) {
+        if (isRetreating() || getHealth() < getMaxHealth() * RETREAT_HEALTH) {
             setTarget(null);
-            retreatTicks = RETREAT_TICKS;
+            if (!isRetreating()) retreatTicks = RETREAT_TICKS;
             return;
         }
         // A chase has a limit, or one skeleton walks the helper out of the world.
@@ -214,8 +253,22 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return centre();
     }
 
+    /** Movement to the owner takes priority over work and collecting drops. */
+    public boolean mustReturnToOwner() {
+        if (isRetreating()) return true;
+        Vec3 centre = centre();
+        return getMode() == HelperMode.FOLLOW
+                && (centre == null || position().distanceTo(centre) > getRoamRadius());
+    }
+
     public boolean isRetreating() {
         return retreatTicks > 0;
+    }
+
+    public int carriedLogs() {
+        int count = 0;
+        for (ItemStack stack : bag.getItems()) if (stack.is(net.minecraft.tags.ItemTags.LOGS)) count += stack.getCount();
+        return count;
     }
 
     public SimpleContainer getBag() {
@@ -259,12 +312,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         }
     }
 
-    /** How far from its centre the helper goes. The player's setting, the same in every mode but staying put. */
+    /** How far from its centre the helper goes. The player's setting, identical in every movement mode. */
     public int workRadius() {
-        int chosen = getRoamRadius();
-        return getMode() == HelperMode.STAY
-                ? Math.max(HelperMode.MIN_DISTANCE, (int) Math.round(chosen * HelperMode.STAY_SHARE))
-                : chosen;
+        return getRoamRadius();
     }
 
     /** Gear handed over by the player is never lost silently: it drops in full when the helper dies. */
@@ -279,6 +329,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     }
 
     public void setOwner(final LivingEntity owner) {
+        if (getOwnerReference() == null) anchor = blockPosition();
         entityData.set(DATA_OWNER, Optional.ofNullable(EntityReference.of(owner)));
     }
 
@@ -297,6 +348,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         anchor = blockPosition();
         getNavigation().stop();
         breaking.reset();
+        workGoal.resetTask();
+        queue.clear();
+        restTicks = 0;
     }
 
     public BlockPos getAnchor() {
@@ -305,6 +359,15 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
     public int getRoamRadius() {
         return entityData.get(DATA_ROAM_RADIUS);
+    }
+
+    public void setRoamRadius(final int radius) {
+        for (int allowed : ROAM_RADII) {
+            if (allowed == radius) {
+                entityData.set(DATA_ROAM_RADIUS, radius);
+                return;
+            }
+        }
     }
 
     /** Steps to the next radius, back to the first after the last. */
@@ -346,6 +409,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_PROFESSION, profession.id());
         queue().clear();
         breaking.reset();
+        getNavigation().stop();
+        workGoal.resetTask();
         queue().set(dev.npchelper.work.HelperTrades.planFor(this, profession));
     }
 
@@ -366,6 +431,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     protected void addAdditionalSaveData(final ValueOutput output) {
         super.addAdditionalSaveData(output);
         EntityReference.store(getOwnerReference(), output, "Owner");
+        output.putBoolean("Expedition", isExpedition());
         output.putString("Profession", getProfession().id());
         output.putString("Mode", getMode().id());
         output.putInt("RoamRadius", getRoamRadius());
@@ -375,12 +441,16 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         ContainerHelper.saveAllItems(output.child("Bag"), bag.getItems());
         queue.store(output.child("Work"));
         supports.store(output.child("Supports"));
+        passages.store(output.child("Passages"));
+        workGoal.store(output.child("TreeWork"));
+        if (placedBench != null) output.store("PlacedBench", BlockPos.CODEC, placedBench);
     }
 
     @Override
     protected void readAdditionalSaveData(final ValueInput input) {
         super.readAdditionalSaveData(input);
         entityData.set(DATA_OWNER, Optional.ofNullable(EntityReference.read(input, "Owner")));
+        entityData.set(DATA_EXPEDITION, input.getBooleanOr("Expedition", false));
         entityData.set(DATA_PROFESSION, HelperProfession.byId(input.getStringOr("Profession", "")).id());
         entityData.set(DATA_MODE, HelperMode.byId(input.getStringOr("Mode", "")).id());
         entityData.set(DATA_ROAM_RADIUS, input.getIntOr("RoamRadius", ROAM_RADII[1]));
@@ -389,5 +459,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());
         queue.load(input.childOrEmpty("Work"));
         supports.load(input.childOrEmpty("Supports"));
+        passages.load(input.childOrEmpty("Passages"));
+        placedBench = input.read("PlacedBench", BlockPos.CODEC).orElse(null);
+        workGoal.load(input.childOrEmpty("TreeWork"));
     }
 }

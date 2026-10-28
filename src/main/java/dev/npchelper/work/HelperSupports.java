@@ -55,21 +55,38 @@ public final class HelperSupports {
         Direction towards = Direction.getApproximateNearest(
                 target.getX() - feet.getX(), 0.0D, target.getZ() - feet.getZ());
         // The step goes beside and level with the feet, so walking on to it is an ordinary stride up.
-        BlockPos spot = feet.relative(towards);
-        if (!level.getBlockState(spot).isAir() || !level.getBlockState(spot.above()).isAir()) {
-            spot = feet;
-            if (!level.getBlockState(spot).isAir()) return false;
+        for (Direction side : List.of(towards, towards.getClockWise(), towards.getCounterClockWise(), towards.getOpposite())) {
+            BlockPos spot = feet.relative(side);
+            if (!level.getBlockState(spot).isAir() || !level.getBlockState(spot.above()).isAir()
+                    || !level.getBlockState(spot.above(2)).isAir()) continue;
+            List<BlockPos> column = new ArrayList<>();
+            BlockPos base = spot;
+            while (level.getBlockState(base).isAir() && column.size() < MAX_STEPS) {
+                column.add(base.immutable());
+                base = base.below();
+            }
+            if (!level.getBlockState(base).isSolid() || placed.size() + column.size() > MAX_STEPS) continue;
+            int soilCount = 0;
+            for (int index = 0; index < helper.getBag().getContainerSize(); index++) {
+                ItemStack stack = helper.getBag().getItem(index);
+                if (stack.is(ItemTags.DIRT)) soilCount += stack.getCount();
+            }
+            if (soilCount < column.size()) return false;
+            // Build the supporting column from the ground up, spending and remembering every block.
+            for (int index = column.size() - 1; index >= 0; index--) {
+                int slot = findSoil();
+                if (slot < 0) return false;
+                ItemStack soil = helper.getBag().getItem(slot);
+                if (!(soil.getItem() instanceof BlockItem block)) return false;
+                BlockPos pos = column.get(index);
+                if (!level.setBlockAndUpdate(pos, block.getBlock().defaultBlockState())) return false;
+                helper.getBag().removeItem(slot, 1);
+                placed.add(pos);
+            }
+            helper.getNavigation().moveTo(spot.getX() + 0.5D, spot.getY() + 1, spot.getZ() + 0.5D, 0, 1.0D);
+            return true;
         }
-
-        int slot = findSoil();
-        if (slot < 0) return false;
-        ItemStack soil = helper.getBag().getItem(slot);
-        if (!(soil.getItem() instanceof BlockItem block)) return false;
-
-        if (!level.setBlockAndUpdate(spot, block.getBlock().defaultBlockState())) return false;
-        helper.getBag().removeItem(slot, 1);
-        placed.add(spot.immutable());
-        return true;
+        return false;
     }
 
     /** The topmost block it set that is still standing, to be broken on the way down. */
