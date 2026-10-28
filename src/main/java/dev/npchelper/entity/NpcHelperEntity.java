@@ -75,6 +75,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private BlockPos anchor = BlockPos.ZERO;
     /** While this has not run out, the helper keeps to the owner whatever its mode says. */
     private int retreatTicks;
+    /** The bench it set down for its own work, to be taken back when the work is done. */
+    private @Nullable BlockPos placedBench;
 
     public NpcHelperEntity(final EntityType<? extends NpcHelperEntity> type, final Level level) {
         super(type, level);
@@ -204,6 +206,27 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return queue;
     }
 
+    public @Nullable BlockPos placedBench() {
+        return placedBench;
+    }
+
+    public void setPlacedBench(final @Nullable BlockPos pos) {
+        placedBench = pos == null ? null : pos.immutable();
+    }
+
+    /** Puts the item in the main hand, swapping whatever was there back into the bag. */
+    public void takeInHand(final net.minecraft.world.item.Item item) {
+        ItemStack held = getMainHandItem();
+        if (held.is(item)) return;
+        for (int slot = 0; slot < bag.getContainerSize(); slot++) {
+            ItemStack stack = bag.getItem(slot);
+            if (!stack.is(item)) continue;
+            bag.setItem(slot, held.copy());
+            equipFromPlayer(EquipmentSlot.MAINHAND, stack.copy());
+            return;
+        }
+    }
+
     /** How far from its centre the helper is willing to work: its own circle, and a short one while it stays put. */
     public int workRadius() {
         return switch (getMode()) {
@@ -292,9 +315,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_PROFESSION, profession.id());
         queue().clear();
         breaking.reset();
-        if (profession == HelperProfession.LUMBERJACK) {
-            queue().set(java.util.List.of(new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.GATHER_WOOD, "", 16)));
-        }
+        queue().set(dev.npchelper.work.HelperTrades.planFor(this, profession));
     }
 
     /** A helper is somebody's, so it stays when the player walks away. */

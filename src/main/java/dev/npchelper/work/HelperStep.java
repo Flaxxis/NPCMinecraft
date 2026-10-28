@@ -7,6 +7,14 @@ import net.minecraft.world.level.storage.ValueOutput;
 public final class HelperStep {
     /** Fell logs until the count is in the bag. */
     public static final String GATHER_WOOD = "gather_wood";
+    /** Make the item at a bench, setting one down and taking it back when none stands nearby. */
+    public static final String CRAFT = "craft";
+    /** Take the item out of a chest or barrel nearby. */
+    public static final String FETCH = "fetch";
+    /** Put the item in hand. */
+    public static final String EQUIP = "equip";
+    /** Break the bench that was set down for the work and take it along. */
+    public static final String TAKE_BENCH = "take_bench";
 
     private final String type;
     private final String item;
