@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:skin_choice_saved",
+  "environment": "npchelper:day",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 100
+}

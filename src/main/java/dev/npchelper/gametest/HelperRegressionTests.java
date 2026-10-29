@@ -55,6 +55,7 @@ public final class HelperRegressionTests {
         tests.register("keeper_night_duty", () -> HelperRegressionTests::keeperNightDuty);
         tests.register("keeper_night_indoors", () -> HelperRegressionTests::keeperNightIndoors);
         tests.register("chest_lid_opens", () -> HelperRegressionTests::chestLidOpens);
+        tests.register("skin_choice_saved", () -> HelperRegressionTests::skinChoiceSaved);
         tests.register("guard_sword_without_iron", () -> HelperRegressionTests::guardSwordWithoutIron);
         tests.register("guard_shield_from_iron", () -> HelperRegressionTests::guardShieldFromIron);
         tests.register("guard_patrols", () -> HelperRegressionTests::guardPatrols);
@@ -1291,6 +1292,29 @@ public final class HelperRegressionTests {
                     "Did not get round to the furnace behind the door: furnace " + inFurnace + ", " + state(h, helper) + ",problem=" + helper.workProblem());
             helper.discard();
         });
+    }
+
+    /** The look is switched from the menu either way round, wraps at the ends, and survives a reload. */
+    private static void skinChoiceSaved(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        var owner = h.makeMockServerPlayerInLevel();
+        helper.setOwner(owner);
+        HelperMenu menu = new HelperMenu(9, owner.getInventory(), helper);
+        h.assertTrue(helper.getSkinIndex() == dev.npchelper.entity.HelperSkins.DEFAULT, "A new helper does not wear the default skin");
+        h.assertTrue(menu.clickMenuButton(owner, HelperMenu.BUTTON_SKIN_PREVIOUS), "Skin button was rejected");
+        h.assertTrue(helper.getSkinIndex() == dev.npchelper.entity.HelperSkins.ALL.size() - 1, "Going back from the first skin did not wrap round");
+        menu.clickMenuButton(owner, HelperMenu.BUTTON_SKIN_NEXT);
+        menu.clickMenuButton(owner, HelperMenu.BUTTON_SKIN_NEXT);
+        menu.clickMenuButton(owner, HelperMenu.BUTTON_SKIN_NEXT);
+        h.assertTrue(helper.getSkinIndex() == 2, "Skin buttons did not step through the list: " + helper.getSkinIndex());
+        var saved = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, h.getLevel().registryAccess());
+        helper.saveWithoutId(saved);
+        NpcHelperEntity restored = h.spawn(NpcHelperMod.HELPER.get(), new BlockPos(24, 1, 20));
+        restored.load(TagValueInput.create(ProblemReporter.DISCARDING, h.getLevel().registryAccess(), saved.buildResult()));
+        h.assertTrue(restored.getSkinIndex() == 2, "The chosen skin was lost on reload");
+        helper.discard();
+        restored.discard();
+        h.succeed();
     }
 
     /** The lid goes up while the helper puts things in, the way it does for a player, and comes down after. */

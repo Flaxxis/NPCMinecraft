@@ -90,6 +90,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
             NpcHelperEntity.class, EntityDataSerializers.STRING);
     private static final EntityDataAccessor<String> DATA_PROFESSION = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.STRING);
+    /** Which of {@link HelperSkins#ALL} it wears. */
+    private static final EntityDataAccessor<Integer> DATA_SKIN = SynchedEntityData.defineId(
+            NpcHelperEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> DATA_ROAM_RADIUS = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.INT);
 
@@ -238,6 +241,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.define(DATA_MODE, HelperMode.ROAM.id());
         entityData.define(DATA_PROFESSION, HelperProfession.NONE.id());
         entityData.define(DATA_ROAM_RADIUS, ROAM_RADII[1]);
+        entityData.define(DATA_SKIN, HelperSkins.DEFAULT);
     }
 
     @Override
@@ -564,6 +568,14 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         return anchor;
     }
 
+    public int getSkinIndex() {
+        return Math.floorMod(entityData.get(DATA_SKIN), HelperSkins.ALL.size());
+    }
+
+    public void setSkinIndex(final int index) {
+        entityData.set(DATA_SKIN, Math.floorMod(index, HelperSkins.ALL.size()));
+    }
+
     public int getRoamRadius() {
         return entityData.get(DATA_ROAM_RADIUS);
     }
@@ -643,6 +655,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         output.putString("Profession", getProfession().id());
         output.putString("Mode", getMode().id());
         output.putInt("RoamRadius", getRoamRadius());
+        output.putInt("Skin", getSkinIndex());
         output.putInt("AnchorX", anchor.getX());
         output.putInt("AnchorY", anchor.getY());
         output.putInt("AnchorZ", anchor.getZ());
@@ -663,6 +676,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_PROFESSION, HelperProfession.byId(input.getStringOr("Profession", "")).id());
         entityData.set(DATA_MODE, HelperMode.byId(input.getStringOr("Mode", "")).id());
         entityData.set(DATA_ROAM_RADIUS, input.getIntOr("RoamRadius", ROAM_RADII[1]));
+        setSkinIndex(input.getIntOr("Skin", HelperSkins.DEFAULT));
         anchor = new BlockPos(input.getIntOr("AnchorX", 0), input.getIntOr("AnchorY", 0), input.getIntOr("AnchorZ", 0));
         if (anchor.equals(BlockPos.ZERO)) anchor = blockPosition();
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());
