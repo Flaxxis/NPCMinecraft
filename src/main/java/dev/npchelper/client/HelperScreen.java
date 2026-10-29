@@ -29,6 +29,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
 
     private EditBox nameBox;
     private Button expeditionButton;
+    private Button skinLabel;
     private Button roamButton, stayButton, followButton, movementTab, professionTab, actionsTab, previousPage, nextPage;
     private final java.util.List<Button> radiusButtons = new java.util.ArrayList<>();
     private final java.util.List<Button> professionButtons = new java.util.ArrayList<>();
@@ -52,11 +53,21 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         super.init();
         NpcHelperEntity helper = menu.helper();
 
-        nameBox = new EditBox(font, leftPos + HelperMenu.LEFT, topPos + NAME_Y, 276, 16, Component.literal("Ім'я"));
+        nameBox = new EditBox(font, leftPos + HelperMenu.LEFT, topPos + NAME_Y, 150, 16, Component.literal("Ім'я"));
         nameBox.setMaxLength(RenameHelper.MAX_LENGTH);
         nameBox.setValue(helper != null && helper.hasCustomName() ? helper.getCustomName().getString() : "");
         nameBox.setResponder(this::sendName);
         addRenderableWidget(nameBox);
+        // The look: the default player skins, one after another, either way round.
+        int skinX = leftPos + HelperMenu.LEFT + 154;
+        addRenderableWidget(Button.builder(Component.literal("<"), b -> press(HelperMenu.BUTTON_SKIN_PREVIOUS))
+                .bounds(skinX, topPos + NAME_Y - 2, 18, 20).build());
+        skinLabel = addRenderableWidget(Button.builder(Component.literal(""), b -> { })
+                .bounds(skinX + 20, topPos + NAME_Y - 2, 82, 20).build());
+        skinLabel.active = false;
+        skinLabel.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal("Скін помічника: стандартні скіни гравця")));
+        addRenderableWidget(Button.builder(Component.literal(">"), b -> press(HelperMenu.BUTTON_SKIN_NEXT))
+                .bounds(skinX + 104, topPos + NAME_Y - 2, 18, 20).build());
 
         radiusButtons.clear();
         professionButtons.clear();
@@ -155,7 +166,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private static String trade(final HelperProfession profession) {
         return switch (profession) {
             case NONE -> "без діла";
-            case GUARD -> "сторож";
+            case GUARD -> "охоронець";
             case LUMBERJACK -> "лісоруб";
             case MINER -> "шахтар";
             case SMELTER -> "кузнець";
@@ -234,6 +245,9 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
             case "keeper_work" -> "Переносити ресурси й об'єднувати стаки";
             case "keeper_deliver" -> "Доставити збережений вантаж";
             case "keeper_visit" -> "Обхід складу й печей";
+            case "prepare_shield" -> "Пошукати щит";
+            case "equip_offhand" -> "Взяти в ліву руку";
+            case "guard_patrol" -> "Патрулювати";
             case "prepare_grove" -> "Знайти або підготувати табличку «гай»";
             case "prepare_axe" -> "Знайти або виготовити сокиру";
             case "mark_grove" -> "Знайти дерево й поставити табличку";
@@ -269,6 +283,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
         NpcHelperEntity helper = menu.helper();
         if (helper == null) return;
         expeditionButton.setMessage(Component.literal(helper.isExpedition() ? "Похід" : "Звичайний"));
+        skinLabel.setMessage(Component.literal(dev.npchelper.entity.HelperSkins.get(helper.getSkinIndex()).label()));
         roamButton.active = helper.getMode() != HelperMode.ROAM;
         stayButton.active = helper.getMode() != HelperMode.STAY;
         followButton.active = helper.getMode() != HelperMode.FOLLOW;

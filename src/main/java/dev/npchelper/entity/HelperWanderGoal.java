@@ -2,6 +2,7 @@ package dev.npchelper.entity;
 
 import java.util.EnumSet;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.phys.Vec3;
 
@@ -36,6 +37,12 @@ public final class HelperWanderGoal extends Goal {
 
     @Override
     public void tick() {
+        // At night the keeper strolls about its warehouse, and stays indoors if the warehouse is.
+        BlockPos post = helper.nightPost();
+        if (post != null && helper.level() instanceof ServerLevel level) {
+            helper.nightGoal().wander(level, Vec3.atBottomCenterOf(post), dev.npchelper.work.HelperKeeper.NIGHT_RADIUS, HelperShelter.indoors(level, post));
+            return;
+        }
         Vec3 centre = helper.centre();
         if (centre == null) return;
 

@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:guard_night_patrol",
+  "environment": "npchelper:night",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 1200
+}

@@ -18,7 +18,8 @@ public final class HelperToolkit {
     public enum Tool {
         AXE(Items.WOODEN_AXE, Items.GOLDEN_AXE, Items.STONE_AXE, Items.COPPER_AXE, Items.IRON_AXE, Items.DIAMOND_AXE, Items.NETHERITE_AXE),
         PICKAXE(Items.WOODEN_PICKAXE, Items.GOLDEN_PICKAXE, Items.STONE_PICKAXE, Items.COPPER_PICKAXE, Items.IRON_PICKAXE, Items.DIAMOND_PICKAXE, Items.NETHERITE_PICKAXE),
-        SHOVEL(Items.WOODEN_SHOVEL, Items.GOLDEN_SHOVEL, Items.STONE_SHOVEL, Items.COPPER_SHOVEL, Items.IRON_SHOVEL, Items.DIAMOND_SHOVEL, Items.NETHERITE_SHOVEL);
+        SHOVEL(Items.WOODEN_SHOVEL, Items.GOLDEN_SHOVEL, Items.STONE_SHOVEL, Items.COPPER_SHOVEL, Items.IRON_SHOVEL, Items.DIAMOND_SHOVEL, Items.NETHERITE_SHOVEL),
+        SWORD(Items.WOODEN_SWORD, Items.GOLDEN_SWORD, Items.STONE_SWORD, Items.COPPER_SWORD, Items.IRON_SWORD, Items.DIAMOND_SWORD, Items.NETHERITE_SWORD);
 
         private final List<Item> byQuality;
 
@@ -48,6 +49,7 @@ public final class HelperToolkit {
         return switch (profession) {
             case LUMBERJACK -> List.of(Tool.AXE);
             case MINER -> List.of(Tool.PICKAXE, Tool.SHOVEL);
+            case GUARD -> List.of(Tool.SWORD);
             default -> List.of();
         };
     }

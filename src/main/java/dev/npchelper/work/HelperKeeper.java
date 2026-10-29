@@ -16,11 +16,14 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
 
 /** One real stack per trip, kept in the visible, saved cargo slot until a destination accepts it. */
 public final class HelperKeeper {
     public static final int WAREHOUSE_RADIUS = 16;
+    /** How far from the warehouse sign the keeper strolls at night, between jobs. */
+    public static final int NIGHT_RADIUS = 6;
     /** Something on the ground is left this long before it counts as lying about rather than just dropped. */
     private static final int SETTLE_AGE = 20 * 10;
     /** Free bag slots below which a round of gathering stops for a walk to the warehouse. */
@@ -42,17 +45,33 @@ public final class HelperKeeper {
     /** The last gathering round found nothing lying about. */
     private boolean groundClear;
     private @Nullable BlockPos warehouse;
+    private long nextLookup;
     private @Nullable BlockPos walkTarget;
     private final Map<BlockPos, Long> retryAfter = new HashMap<>();
     private long lastProgress;
-    private double bestDistance;
+    private long walkStarted;
+    private int walkBudget;
+    private @Nullable Vec3 movedFrom;
+    /** Standing this long without moving at all, the way is blocked — long enough for any door to open and shut. */
+    private static final int STANDING_LIMIT = 20 * 10;
+    /** A walk may take this many ticks per block of distance, plus the minimum, up to the maximum: a minute. */
+    private static final int WALK_TICKS_PER_BLOCK = 20, WALK_BUDGET_MIN = 20 * 10, WALK_BUDGET_MAX = 20 * 60;
+    /** Moving this far counts as getting somewhere. */
+    private static final double MOVED = 0.5D;
     private String problem = "";
     private boolean navigating;
 
     public HelperKeeper(final NpcHelperEntity helper) { this.helper = helper; }
     public String problem() { return problem; }
+    /** The warehouse sign, looked up if not known yet — but a fruitless search is repeated only every few seconds. */
+    public @Nullable BlockPos warehouse(final ServerLevel level) {
+        if (warehouse == null && level.getGameTime() < nextLookup) return null;
+        nextLookup = level.getGameTime() + 100;
+        return findWarehouse(level);
+    }
     public void reset() {
         warehouse = null;
+        nextLookup = 0;
         walkTarget = null;
         if (navigating) helper.getNavigation().setRequiredPathLength(0);
         navigating = false;
@@ -81,23 +100,31 @@ public final class HelperKeeper {
         return path != null && path.canReach();
     }
 
+    /**
+     * Walks to the spot. Moving at all is progress: the way round a house to its door leads away from the chest before it
+     * leads back, and opening the door takes a moment, so straight-line distance is no measure of getting there. The walk
+     * is given up only when the keeper has not moved for a good while, or has spent longer than the distance could take.
+     */
     private boolean walk(final ServerLevel level, final BlockPos pos) {
         enableNavigation();
         if (arrived(pos)) { helper.getNavigation().stop(); walkTarget = null; return true; }
+        long now = level.getGameTime();
         if (!pos.equals(walkTarget)) {
             helper.getNavigation().stop();
             walkTarget = pos;
-            lastProgress = level.getGameTime();
-            bestDistance = Double.MAX_VALUE;
+            walkStarted = now;
+            lastProgress = now;
+            movedFrom = helper.position();
+            // Time for the way and a detour round it, with slack for doors; never more than a minute.
+            walkBudget = Math.min(WALK_BUDGET_MAX, WALK_BUDGET_MIN + (int) Math.sqrt(pos.distToCenterSqr(helper.position())) * WALK_TICKS_PER_BLOCK);
         }
-        double distance = pos.distToCenterSqr(helper.position());
-        if (distance + 0.1D < bestDistance) {
-            bestDistance = distance;
-            lastProgress = level.getGameTime();
+        if (movedFrom == null || helper.position().distanceTo(movedFrom) >= MOVED) {
+            movedFrom = helper.position();
+            lastProgress = now;
             helper.queue().noteProgress();
         }
-        if (level.getGameTime() - lastProgress > 100) {
-            retryAfter.put(pos, level.getGameTime() + 100);
+        if (now - lastProgress > STANDING_LIMIT || now - walkStarted > walkBudget) {
+            retryAfter.put(pos, now + 100);
             walkTarget = null;
             helper.getNavigation().stop();
             problem = "Шлях до сховища заблокований";
@@ -108,7 +135,12 @@ public final class HelperKeeper {
             if (path == null || !path.canReach()) {
                 retryAfter.put(pos, level.getGameTime() + 100);
                 problem = "Не можу дійти до сховища";
-            } else helper.getNavigation().moveTo(path, 1.0D);
+            } else {
+                // The way round may be far longer than the straight line: allow for the path as planned.
+                walkBudget = (int) Math.min(WALK_BUDGET_MAX, Math.max(walkBudget,
+                        now - walkStarted + WALK_BUDGET_MIN + (long) path.getNodeCount() * WALK_TICKS_PER_BLOCK));
+                helper.getNavigation().moveTo(path, 1.0D);
+            }
         }
         return false;
     }
@@ -203,6 +235,7 @@ public final class HelperKeeper {
         if (!walk(level, target)) return false;
         Container container = HelperContainers.containerAt(level, target);
         if (container == null) return false;
+        helper.openContainer(level, target);
         ItemStack left = HelperContainers.put(container, cargo);
         if (left.getCount() < cargo.getCount()) {
             helper.getCargo().setItem(0, left);
@@ -333,6 +366,7 @@ public final class HelperKeeper {
 
             Container container = HelperContainers.containerAt(level, target);
             if (container == null) return true;
+            helper.openContainer(level, target);
             ItemStack left = HelperContainers.put(container, load);
             int moved = spare - left.getCount();
             if (moved > 0) {
@@ -561,6 +595,7 @@ public final class HelperKeeper {
             for (int slot = 0; slot < container.getContainerSize() && !holds; slot++) holds = wanted.test(container.getItem(slot));
             if (!holds) continue;
             if (!walk(level, pos)) return false;
+            helper.openContainer(level, pos);
             int missing = target - countInBag(wanted);
             for (int slot = 0; slot < container.getContainerSize() && missing > 0; slot++) {
                 ItemStack stack = container.getItem(slot);
@@ -674,13 +709,16 @@ public final class HelperKeeper {
 
     /** One step of the work at the chests. True means none is left. */
     private boolean tendChests(final ServerLevel level, final List<BlockPos> stores) {
+        // At night only the warehouse itself is tended; chests out in the dark wait for the morning.
+        boolean night = dev.npchelper.entity.HelperNightGoal.night(helper);
         var scanned = new LinkedHashSet<>(stores);
-        if (helper.centre() != null) scanned.addAll(HelperContainers.around(level, BlockPos.containing(helper.centre()), helper.workRadius()));
+        if (helper.centre() != null && !night) scanned.addAll(HelperContainers.around(level, BlockPos.containing(helper.centre()), helper.workRadius()));
         // Merge duplicate slots within every inspected chest, while actually standing beside it.
         for (BlockPos pos : scanned) {
             Container container = HelperContainers.containerAt(level, pos);
             if (container == null || !HelperContainers.needsCompaction(container) || !reachable(level, pos)) continue;
             if (!walk(level, pos)) return false;
+            helper.openContainer(level, pos);
             if (HelperContainers.compact(container)) helper.queue().noteProgress();
             return false;
         }
@@ -699,13 +737,14 @@ public final class HelperKeeper {
                     int room = HelperContainers.matchingRoom(target, stack);
                     if (room <= 0) continue;
                     if (!walk(level, from)) return false;
+                    helper.openContainer(level, from);
                     withdraw(source, slot, Math.min(stack.getCount(), room));
                     return false;
                 }
             }
         }
         // Only the outer annulus supplies the warehouse: radius is measured from the STORE sign.
-        if (helper.centre() == null) return true;
+        if (helper.centre() == null || night) return true;
         for (BlockPos from : HelperContainers.around(level, BlockPos.containing(helper.centre()), helper.workRadius())) {
             long dx = from.getX() - warehouse.getX(), dz = from.getZ() - warehouse.getZ();
             if (dx * dx + dz * dz <= WAREHOUSE_RADIUS * WAREHOUSE_RADIUS || stores.contains(from) || !reachable(level, from)) continue;
@@ -721,6 +760,7 @@ public final class HelperKeeper {
                 int amount = Math.min(stack.getCount(), HelperContainers.room(target, stack));
                 if (amount <= 0) continue;
                 if (!walk(level, from)) return false;
+                helper.openContainer(level, from);
                 withdraw(source, slot, amount);
                 return false;
             }

@@ -43,12 +43,22 @@ import org.jspecify.annotations.Nullable;
  * A crafted helper. Owner, name, mode, bag and gear live on the helper, not on the player, so one world can hold several of
  * them and each keeps its own across a reload.
  */
-public final class NpcHelperEntity extends PathfinderMob implements OwnableEntity {
+public final class NpcHelperEntity extends PathfinderMob implements OwnableEntity, net.minecraft.world.entity.ContainerUser {
     public static final int BAG_SIZE = 27;
     /** What the range steps through when the player clicks it. It means the same in every mode. */
     public static final int[] ROAM_RADII = {4, 8, 16, 32, 64};
     /** Hostiles further than this are somebody else's problem. */
     public static final double GUARD_RANGE = 16.0D;
+    /** How far a guard keeps watch — as far as its eyes carry. */
+    public static final double GUARD_SIGHT = 32.0D;
+    /** Closer than this a guard hears a monster, whichever way it is facing. */
+    private static final double GUARD_HEARING = 4.0D;
+    /** A guard sees what is within this angle either side of where it looks. */
+    private static final double GUARD_VIEW_COS = 0.5D;
+    /** A monster this far below and out of the open sky is in a cave, not the guard's business. */
+    private static final double UNDERGROUND = 4.0D;
+    /** A chest lid stays up this long after the last item goes in or out. */
+    private static final int LID_HOLD = 30;
     /** A chase that strays this far from the centre is called off. */
     private static final double CHASE_LEASH = 24.0D;
     /** Below this share of its health the helper breaks off and keeps to the owner. */
@@ -80,6 +90,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
             NpcHelperEntity.class, EntityDataSerializers.STRING);
     private static final EntityDataAccessor<String> DATA_PROFESSION = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.STRING);
+    /** Which of {@link HelperSkins#ALL} it wears. */
+    private static final EntityDataAccessor<Integer> DATA_SKIN = SynchedEntityData.defineId(
+            NpcHelperEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> DATA_ROAM_RADIUS = SynchedEntityData.defineId(
             NpcHelperEntity.class, EntityDataSerializers.INT);
 
@@ -104,6 +117,10 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     private int retreatTicks;
     /** The bench it set down for its own work, to be taken back when the work is done. */
     private @Nullable BlockPos placedBench;
+    /** The chest or barrel it has open, by its canonical position, and when it shuts again. */
+    private @Nullable BlockPos openAt;
+    private net.minecraft.world.@Nullable Container openContainer;
+    private long lidCloses;
 
     public NpcHelperEntity(final EntityType<? extends NpcHelperEntity> type, final Level level) {
         super(type, level);
@@ -135,6 +152,8 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     }
 
     public String workProblem() { return workGoal.problem(); }
+    public int leavesCut() { return workGoal.leavesCut(); }
+    public dev.npchelper.work.HelperWorkGoal workGoal() { return workGoal; }
     public HelperNightGoal nightGoal() { return nightGoal; }
     public boolean isExpedition() { return entityData.get(DATA_EXPEDITION); }
     public void setExpedition(final boolean expedition) {
@@ -191,11 +210,20 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         queue.prepend(java.util.List.of(new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.KEEPER_VISIT, "", 1)));
     }
 
+    /** Where the keeper keeps to at night: its warehouse sign. Null by day, for other trades, or with no warehouse yet. */
+    public @Nullable BlockPos nightPost() {
+        if (getProfession() != HelperProfession.KEEPER || isExpedition() || !HelperNightGoal.night(this)
+                || !(level() instanceof ServerLevel server)) return null;
+        return workGoal.keeper().warehouse(server);
+    }
+
     private void watchForStuck() {
-        Vec3 home = centre();
+        BlockPos post = nightPost();
+        Vec3 home = post != null ? Vec3.atBottomCenterOf(post) : centre();
+        int range = post != null ? dev.npchelper.work.HelperKeeper.NIGHT_RADIUS : workRadius();
         // Idle with nothing to do and already in place is resting, not being trapped.
         boolean wantsToMove = getNavigation().isStuck() || !queue.isEmpty()
-                || home != null && position().distanceTo(home) > workRadius() + 2;
+                || home != null && position().distanceTo(home) > range + 2;
         boolean explained = !wantsToMove || getTarget() != null || nightGoal.active() || breaking.target() != null || home == null;
         if (explained || stillAt == null || position().distanceTo(stillAt) > STILL_MARGIN) {
             stillAt = position();
@@ -213,6 +241,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.define(DATA_MODE, HelperMode.ROAM.id());
         entityData.define(DATA_PROFESSION, HelperProfession.NONE.id());
         entityData.define(DATA_ROAM_RADIUS, ROAM_RADII[1]);
+        entityData.define(DATA_SKIN, HelperSkins.DEFAULT);
     }
 
     @Override
@@ -231,8 +260,78 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
         targetSelector.addGoal(1, new HurtByTargetGoal(this));
         targetSelector.addGoal(2, new DefendOwnerGoal(this));
+        targetSelector.addGoal(2, new DefendOthersGoal(this));
         targetSelector.addGoal(3, new NearestAttackableTargetGoal<>(this, Monster.class, 10, true, false,
-                (target, level) -> mayFight(target) && target.distanceToSqr(this) <= GUARD_RANGE * GUARD_RANGE));
+                (target, level) -> mayFight(target) && spots(target)));
+    }
+
+    /**
+     * Whether a monster (already in line of sight) is close enough to go for. Every helper fights what comes within
+     * sixteen blocks; a guard watches further, but only what is in front of its eyes and not down in a cave — it turns
+     * this way and that on its round so as to see all round.
+     */
+    private boolean spots(final LivingEntity target) {
+        double distance = target.distanceToSqr(this);
+        if (getProfession() != HelperProfession.GUARD) return distance <= GUARD_RANGE * GUARD_RANGE;
+        if (distance > GUARD_SIGHT * GUARD_SIGHT) return false;
+        if (target.getY() < getY() - UNDERGROUND && !level().canSeeSky(target.blockPosition())) return false;
+        if (distance <= GUARD_HEARING * GUARD_HEARING) return true;
+        Vec3 look = getViewVector(1.0F);
+        Vec3 towards = target.getEyePosition().subtract(getEyePosition());
+        double flat = Math.sqrt(towards.x * towards.x + towards.z * towards.z) * Math.sqrt(look.x * look.x + look.z * look.z);
+        return flat > 0 && (look.x * towards.x + look.z * towards.z) / flat >= GUARD_VIEW_COS;
+    }
+
+    /** How far from its centre a chase may go: a guard's whole range and a little over. */
+    private double chaseLeash() {
+        return getProfession() == HelperProfession.GUARD ? Math.max(CHASE_LEASH, workRadius() + 8.0D) : CHASE_LEASH;
+    }
+
+    /** With a shield in the other hand it goes in behind it, and lowers it to strike. */
+    private void raiseShield(final @Nullable LivingEntity target) {
+        boolean shield = getOffhandItem().has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS);
+        boolean wanted = shield && target != null && distanceTo(target) > 3.0D;
+        if (wanted && !isUsingItem()) startUsingItem(InteractionHand.OFF_HAND);
+        else if (!wanted && isUsingItem() && getUsedItemHand() == InteractionHand.OFF_HAND) stopUsingItem();
+    }
+
+    /**
+     * Lifts the lid of the chest or barrel it is taking from or putting into, the way a player's opening it would, and
+     * keeps it up while it works there. Opening another one shuts this one first.
+     */
+    public void openContainer(final ServerLevel level, final BlockPos pos) {
+        BlockPos key = dev.npchelper.work.HelperContainers.canonical(level, pos);
+        lidCloses = level.getGameTime() + LID_HOLD;
+        if (key.equals(openAt)) return;
+        closeContainer();
+        var container = dev.npchelper.work.HelperContainers.containerAt(level, pos);
+        if (container == null) return;
+        openAt = key;
+        openContainer = container;
+        container.startOpen(this);
+    }
+
+    private void closeContainer() {
+        var container = openContainer;
+        openContainer = null;
+        openAt = null;
+        if (container != null) container.stopOpen(this);
+    }
+
+    @Override
+    public boolean hasContainerOpen(final net.minecraft.world.level.block.entity.ContainerOpenersCounter counter, final BlockPos pos) {
+        return openAt != null && dev.npchelper.work.HelperContainers.canonical(level(), pos).equals(openAt);
+    }
+
+    @Override
+    public double getContainerInteractionRange() {
+        return dev.npchelper.work.HelperBreaking.REACH;
+    }
+
+    @Override
+    public void remove(final RemovalReason reason) {
+        if (!level().isClientSide()) closeContainer();
+        super.remove(reason);
     }
 
     /**
@@ -270,6 +369,9 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         if (retreatTicks > 0) retreatTicks--;
         watchForStuck();
         if (tickCount % 20 == 0) scheduleKeeperVisit(level);
+        if (openContainer != null && (level.getGameTime() >= lidCloses || openAt == null
+                || openAt.distToCenterSqr(position()) > 36.0D)) closeContainer();
+        raiseShield(getTarget());
         pickup.tick();
         eating.tick();
         passages.tick();
@@ -308,7 +410,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         }
         // A chase has a limit, or one skeleton walks the helper out of the world.
         Vec3 centre = centre();
-        if (centre != null && target.position().distanceTo(centre) > CHASE_LEASH) setTarget(null);
+        if (centre != null && target.position().distanceTo(centre) > chaseLeash()) setTarget(null);
     }
 
     /** Where the helper belongs right now: the owner while following or retreating, the remembered spot otherwise. */
@@ -400,6 +502,27 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         }
     }
 
+    /** Puts the item in the other hand, out of the bag or the main hand; what was there goes into the bag. */
+    public void takeInOffhand(final net.minecraft.world.item.Item item) {
+        ItemStack held = getOffhandItem();
+        if (held.is(item)) return;
+        ItemStack chosen = ItemStack.EMPTY;
+        if (getMainHandItem().is(item)) {
+            chosen = getMainHandItem().copy();
+            equipFromPlayer(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
+        } else {
+            for (int slot = 0; slot < bag.getContainerSize() && chosen.isEmpty(); slot++) {
+                if (bag.getItem(slot).is(item)) chosen = bag.removeItem(slot, 1);
+            }
+        }
+        if (chosen.isEmpty()) return;
+        equipFromPlayer(EquipmentSlot.OFFHAND, chosen);
+        if (!held.isEmpty()) {
+            ItemStack left = bag.addItem(held.copy());
+            if (!left.isEmpty()) spawnAtLocation((ServerLevel) level(), left);
+        }
+    }
+
     /** How far from its centre the helper goes. The player's setting, identical in every movement mode. */
     public int workRadius() {
         return getRoamRadius();
@@ -443,6 +566,14 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
 
     public BlockPos getAnchor() {
         return anchor;
+    }
+
+    public int getSkinIndex() {
+        return Math.floorMod(entityData.get(DATA_SKIN), HelperSkins.ALL.size());
+    }
+
+    public void setSkinIndex(final int index) {
+        entityData.set(DATA_SKIN, Math.floorMod(index, HelperSkins.ALL.size()));
     }
 
     public int getRoamRadius() {
@@ -524,6 +655,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         output.putString("Profession", getProfession().id());
         output.putString("Mode", getMode().id());
         output.putInt("RoamRadius", getRoamRadius());
+        output.putInt("Skin", getSkinIndex());
         output.putInt("AnchorX", anchor.getX());
         output.putInt("AnchorY", anchor.getY());
         output.putInt("AnchorZ", anchor.getZ());
@@ -544,6 +676,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         entityData.set(DATA_PROFESSION, HelperProfession.byId(input.getStringOr("Profession", "")).id());
         entityData.set(DATA_MODE, HelperMode.byId(input.getStringOr("Mode", "")).id());
         entityData.set(DATA_ROAM_RADIUS, input.getIntOr("RoamRadius", ROAM_RADII[1]));
+        setSkinIndex(input.getIntOr("Skin", HelperSkins.DEFAULT));
         anchor = new BlockPos(input.getIntOr("AnchorX", 0), input.getIntOr("AnchorY", 0), input.getIntOr("AnchorZ", 0));
         if (anchor.equals(BlockPos.ZERO)) anchor = blockPosition();
         ContainerHelper.loadAllItems(input.childOrEmpty("Bag"), bag.getItems());

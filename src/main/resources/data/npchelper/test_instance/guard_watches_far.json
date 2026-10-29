@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:guard_watches_far",
+  "environment": "npchelper:day",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 1600
+}

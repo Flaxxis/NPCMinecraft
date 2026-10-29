@@ -24,7 +24,7 @@ public enum HelperProfession {
      * their data keep their place — and are offered to the player only once they are built.
      */
     public boolean available() {
-        return this == NONE || this == LUMBERJACK || this == KEEPER;
+        return this == NONE || this == GUARD || this == LUMBERJACK || this == KEEPER;
     }
 
     /** The profession for a saved id; NONE for anything unknown, so an old or edited save still loads. */

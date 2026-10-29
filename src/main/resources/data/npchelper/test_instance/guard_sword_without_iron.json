@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:function",
+  "function": "npchelper:guard_sword_without_iron",
+  "environment": "npchelper:day",
+  "structure": "npchelper:regression_arena",
+  "max_ticks": 4800
+}

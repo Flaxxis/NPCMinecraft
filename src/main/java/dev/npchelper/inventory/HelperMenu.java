@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 public final class HelperMenu extends AbstractContainerMenu {
     public static final int BUTTON_ROAM = 0, BUTTON_STAY = 1, BUTTON_FOLLOW = 2;
     public static final int BUTTON_RADIUS = 10, BUTTON_PROFESSION = 20, BUTTON_EXPEDITION = 30;
+    public static final int BUTTON_SKIN_PREVIOUS = 40, BUTTON_SKIN_NEXT = 41;
 
     public static final int EQUIPMENT_COUNT = HelperEquipmentContainer.SLOTS.length;
     public static final int BAG_SIZE = NpcHelperEntity.BAG_SIZE;
@@ -154,6 +155,10 @@ public final class HelperMenu extends AbstractContainerMenu {
         if (helper == null || !helper.isOwnedBy(player)) return false;
         if (buttonId == BUTTON_EXPEDITION) {
             helper.setExpedition(!helper.isExpedition());
+            return true;
+        }
+        if (buttonId == BUTTON_SKIN_PREVIOUS || buttonId == BUTTON_SKIN_NEXT) {
+            helper.setSkinIndex(dev.npchelper.entity.HelperSkins.next(helper.getSkinIndex(), buttonId == BUTTON_SKIN_NEXT ? 1 : -1));
             return true;
         }
         int radius = buttonId - BUTTON_RADIUS;
