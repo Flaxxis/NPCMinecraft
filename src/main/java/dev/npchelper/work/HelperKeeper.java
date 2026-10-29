@@ -235,6 +235,7 @@ public final class HelperKeeper {
         if (!walk(level, target)) return false;
         Container container = HelperContainers.containerAt(level, target);
         if (container == null) return false;
+        helper.openContainer(level, target);
         ItemStack left = HelperContainers.put(container, cargo);
         if (left.getCount() < cargo.getCount()) {
             helper.getCargo().setItem(0, left);
@@ -365,6 +366,7 @@ public final class HelperKeeper {
 
             Container container = HelperContainers.containerAt(level, target);
             if (container == null) return true;
+            helper.openContainer(level, target);
             ItemStack left = HelperContainers.put(container, load);
             int moved = spare - left.getCount();
             if (moved > 0) {
@@ -593,6 +595,7 @@ public final class HelperKeeper {
             for (int slot = 0; slot < container.getContainerSize() && !holds; slot++) holds = wanted.test(container.getItem(slot));
             if (!holds) continue;
             if (!walk(level, pos)) return false;
+            helper.openContainer(level, pos);
             int missing = target - countInBag(wanted);
             for (int slot = 0; slot < container.getContainerSize() && missing > 0; slot++) {
                 ItemStack stack = container.getItem(slot);
@@ -715,6 +718,7 @@ public final class HelperKeeper {
             Container container = HelperContainers.containerAt(level, pos);
             if (container == null || !HelperContainers.needsCompaction(container) || !reachable(level, pos)) continue;
             if (!walk(level, pos)) return false;
+            helper.openContainer(level, pos);
             if (HelperContainers.compact(container)) helper.queue().noteProgress();
             return false;
         }
@@ -733,6 +737,7 @@ public final class HelperKeeper {
                     int room = HelperContainers.matchingRoom(target, stack);
                     if (room <= 0) continue;
                     if (!walk(level, from)) return false;
+                    helper.openContainer(level, from);
                     withdraw(source, slot, Math.min(stack.getCount(), room));
                     return false;
                 }
@@ -755,6 +760,7 @@ public final class HelperKeeper {
                 int amount = Math.min(stack.getCount(), HelperContainers.room(target, stack));
                 if (amount <= 0) continue;
                 if (!walk(level, from)) return false;
+                helper.openContainer(level, from);
                 withdraw(source, slot, amount);
                 return false;
             }

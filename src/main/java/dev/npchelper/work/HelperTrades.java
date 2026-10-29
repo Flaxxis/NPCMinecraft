@@ -8,6 +8,7 @@ import java.util.List;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -47,6 +48,12 @@ public final class HelperTrades {
             plan.add(new HelperStep(HelperStep.GATHER_DIRT, "", HelperSupports.CARRY));
             plan.add(new HelperStep(HelperStep.GATHER_WOOD, "", WOOD_LOAD));
             plan.add(new HelperStep(HelperStep.STORE, "", 1));
+        } else if (profession == HelperProfession.GUARD) {
+            // The sword is a must and is seen to like any tool; the shield is looked for once, never chased.
+            plan.add(new HelperStep(HelperStep.PREPARE_TOOLS, "", 1));
+            plan.add(new HelperStep(HelperStep.PREPARE_SHIELD, "", 1));
+            plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
+            plan.add(new HelperStep(HelperStep.GUARD_PATROL, "", 1));
         } else if (profession == HelperProfession.KEEPER) {
             plan.add(new HelperStep(HelperStep.PREPARE_STORE, "", 1));
             plan.add(new HelperStep(HelperStep.TAKE_BENCH, "", 1));
@@ -71,6 +78,40 @@ public final class HelperTrades {
                 if (HelperToolkit.best(helper, tool).isEmpty()) { addTool(level, helper, tool, plan); break; }
             }
         }
+        return plan;
+    }
+
+    /**
+     * A shield for the other hand: one carried, else one from a chest nearby, else one made — but only when the iron for
+     * it is already in the bag or a chest. Iron is never dug or smelted for it, and with no shield to be had the plan is
+     * empty and the guard goes on without.
+     */
+    public static List<HelperStep> prepareShield(final NpcHelperEntity helper) {
+        List<HelperStep> plan = new ArrayList<>();
+        if (!(helper.level() instanceof ServerLevel level)) return plan;
+        String shield = HelperObtain.key(Items.SHIELD);
+        if (helper.getOffhandItem().is(Items.SHIELD)) return plan;
+        if (helper.getMainHandItem().is(Items.SHIELD) || helper.getBag().countItem(Items.SHIELD) > 0) {
+            plan.add(new HelperStep(HelperStep.EQUIP_OFFHAND, shield, 1));
+            return plan;
+        }
+        boolean stored = false, iron = helper.getBag().countItem(Items.IRON_INGOT) > 0;
+        for (var pos : HelperResources.storages(helper)) {
+            var container = HelperContainers.containerAt(level, pos);
+            if (container == null) continue;
+            stored |= container.countItem(Items.SHIELD) > 0;
+            iron |= container.countItem(Items.IRON_INGOT) > 0;
+        }
+        if (stored) {
+            plan.add(new HelperStep(HelperStep.FETCH, shield, 1));
+        } else if (iron) {
+            HelperObtain.Plan obtained = HelperResources.plan(helper, Items.SHIELD, 1);
+            if (obtained.refused()) return plan;
+            plan.addAll(obtained.steps());
+        } else {
+            return plan;
+        }
+        plan.add(new HelperStep(HelperStep.EQUIP_OFFHAND, shield, 1));
         return plan;
     }
 

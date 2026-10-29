@@ -15,6 +15,12 @@ public final class HelperStep {
     /** The keeper's round of the warehouse: what it gathered goes in, the furnaces are emptied and loaded again. */
     public static final String KEEPER_VISIT = "keeper_visit";
     public static final String PREPARE_GROVE = "prepare_grove";
+    /** A shield if one can be had without iron having to be found first; going without is no failure. */
+    public static final String PREPARE_SHIELD = "prepare_shield";
+    /** Put the item in the other hand. */
+    public static final String EQUIP_OFFHAND = "equip_offhand";
+    /** The guard's round of its range; it never runs out. */
+    public static final String GUARD_PATROL = "guard_patrol";
     public static final String PREPARE_AXE = "prepare_axe";
     public static final String MARK_GROVE = "mark_grove";
     public static final String BOOTSTRAP_WOOD = "bootstrap_wood";

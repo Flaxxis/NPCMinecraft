@@ -155,7 +155,7 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
     private static String trade(final HelperProfession profession) {
         return switch (profession) {
             case NONE -> "без діла";
-            case GUARD -> "сторож";
+            case GUARD -> "охоронець";
             case LUMBERJACK -> "лісоруб";
             case MINER -> "шахтар";
             case SMELTER -> "кузнець";
@@ -234,6 +234,9 @@ public final class HelperScreen extends AbstractContainerScreen<HelperMenu> {
             case "keeper_work" -> "Переносити ресурси й об'єднувати стаки";
             case "keeper_deliver" -> "Доставити збережений вантаж";
             case "keeper_visit" -> "Обхід складу й печей";
+            case "prepare_shield" -> "Пошукати щит";
+            case "equip_offhand" -> "Взяти в ліву руку";
+            case "guard_patrol" -> "Патрулювати";
             case "prepare_grove" -> "Знайти або підготувати табличку «гай»";
             case "prepare_axe" -> "Знайти або виготовити сокиру";
             case "mark_grove" -> "Знайти дерево й поставити табличку";

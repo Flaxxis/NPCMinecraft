@@ -54,6 +54,12 @@ public final class HelperRegressionTests {
         tests.register("keeper_without_furnace", () -> HelperRegressionTests::keeperWithoutFurnace);
         tests.register("keeper_night_duty", () -> HelperRegressionTests::keeperNightDuty);
         tests.register("keeper_night_indoors", () -> HelperRegressionTests::keeperNightIndoors);
+        tests.register("chest_lid_opens", () -> HelperRegressionTests::chestLidOpens);
+        tests.register("guard_sword_without_iron", () -> HelperRegressionTests::guardSwordWithoutIron);
+        tests.register("guard_shield_from_iron", () -> HelperRegressionTests::guardShieldFromIron);
+        tests.register("guard_patrols", () -> HelperRegressionTests::guardPatrols);
+        tests.register("guard_watches_far", () -> HelperRegressionTests::guardWatchesFar);
+        tests.register("guard_defends_helper", () -> HelperRegressionTests::guardDefendsHelper);
         tests.register("keeper_furnace_behind_door", () -> HelperRegressionTests::keeperFurnaceBehindDoor);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
@@ -432,7 +438,7 @@ public final class HelperRegressionTests {
         helper.queue().set(List.of(new HelperStep(HelperStep.GATHER_WOOD, "", 64)));
         helper.setNoAi(false);
         h.succeedWhen(() -> {
-            h.assertTrue(helper.getBag().countItem(Items.SPRUCE_LOG) == 9, "Did not get the whole spruce in under its leaves: " + state(h, helper));
+            h.assertTrue(helper.getBag().countItem(Items.SPRUCE_LOG) == 9, "Did not get the whole spruce in under its leaves: " + state(h, helper) + ",cut=" + helper.leavesCut() + ",problem=" + helper.workProblem());
             h.assertTrue(helper.leavesCut() >= 1 && helper.leavesCut() <= 5, "Leaves cut for one tree: " + helper.leavesCut() + " of " + total);
             h.assertTrue(!helper.supports().any(), "Own pillar was not taken down");
             helper.discard();
@@ -487,7 +493,7 @@ public final class HelperRegressionTests {
         helper.setNoAi(false);
         h.runAfterDelay(8, () -> {
             h.assertTrue(helper.breaking().target() != null, "Test did not reach active chopping");
-            h.assertFalse(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.GUARD.ordinal()),
+            h.assertFalse(menu.clickMenuButton(owner, HelperMenu.BUTTON_PROFESSION + HelperProfession.MINER.ordinal()),
                     "A trade that is not built yet was accepted");
             h.assertTrue(helper.getProfession() == HelperProfession.NONE && helper.breaking().target() != null,
                     "A refused trade still disturbed the running work");
@@ -1284,6 +1290,122 @@ public final class HelperRegressionTests {
                     "Did not get round to the furnace behind the door: furnace " + inFurnace + ", " + state(h, helper) + ",problem=" + helper.workProblem());
             helper.discard();
         });
+    }
+
+    /** The lid goes up while the helper puts things in, the way it does for a player, and comes down after. */
+    private static void chestLidOpens(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        BlockPos store = chest(h, 23, 20);
+        // Its own warehouse sign, so the logs go here and not to a neighbouring test's warehouse.
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(23, 1, 21)), HelperSigns.Mark.STORE), "Cannot mark warehouse");
+        helper.getBag().addItem(new ItemStack(Items.OAK_LOG, 12));
+        java.util.concurrent.atomic.AtomicBoolean opened = new java.util.concurrent.atomic.AtomicBoolean();
+        h.onEachTick(() -> {
+            if (net.minecraft.world.level.block.entity.ChestBlockEntity.getOpenCount(h.getLevel(), store) > 0) opened.set(true);
+        });
+        helper.queue().set(List.of(new HelperStep(HelperStep.STORE, "", 1)));
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(HelperContainers.containerAt(h.getLevel(), store).countItem(Items.OAK_LOG) == 12, "Logs were not stored");
+            h.assertTrue(opened.get(), "The chest lid never went up");
+            h.assertTrue(net.minecraft.world.level.block.entity.ChestBlockEntity.getOpenCount(h.getLevel(), store) == 0, "The chest was left open");
+            helper.discard();
+        });
+    }
+
+    /** No iron anywhere: a sword is made and the guard goes on its round without a shield, not off hunting for one. */
+    private static void guardSwordWithoutIron(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.OAK_LOG, 4));
+        helper.setProfession(HelperProfession.GUARD);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            var current = helper.queue().current();
+            h.assertTrue(HelperToolkit.Tool.SWORD.is(helper.getMainHandItem()), "No sword in hand: " + state(h, helper));
+            h.assertTrue(current != null && current.type().equals(HelperStep.GUARD_PATROL), "Not on its round: " + state(h, helper));
+            h.assertTrue(helper.getOffhandItem().isEmpty(), "A shield appeared from nowhere");
+            h.assertTrue(helper.queue().snapshot().stream().noneMatch(view -> view.type().equals(HelperStep.PREPARE_SHIELD)), "Still looking for a shield");
+            helper.discard();
+        });
+    }
+
+    /** With an iron ingot to hand the guard makes itself a shield and carries it in the other hand. */
+    private static void guardShieldFromIron(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.OAK_LOG, 6));
+        BlockPos store = chest(h, 23, 20);
+        HelperContainers.containerAt(h.getLevel(), store).setItem(0, new ItemStack(Items.IRON_INGOT, 1));
+        helper.setProfession(HelperProfession.GUARD);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(HelperToolkit.Tool.SWORD.is(helper.getMainHandItem()), "No sword in hand: " + state(h, helper));
+            h.assertTrue(helper.getOffhandItem().is(Items.SHIELD), "No shield in the other hand: " + state(h, helper) + ",problem=" + helper.workProblem());
+            helper.discard();
+        });
+    }
+
+    /** The round takes it out across its range, with stops to look about, and never past the range. */
+    private static void guardPatrols(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.WOODEN_SWORD));
+        helper.setRoamRadius(8);
+        net.minecraft.world.phys.Vec3 start = helper.position();
+        java.util.concurrent.atomic.AtomicReference<Double> furthest = new java.util.concurrent.atomic.AtomicReference<>(0.0D);
+        helper.setProfession(HelperProfession.GUARD);
+        helper.setNoAi(false);
+        h.onEachTick(() -> {
+            double distance = Math.sqrt(helper.position().distanceToSqr(start.x, helper.getY(), start.z));
+            furthest.set(Math.max(furthest.get(), distance));
+            h.assertTrue(distance <= 8 + 2, "Patrol went past its range: " + distance);
+        });
+        h.runAfterDelay(1100, () -> {
+            h.assertTrue(furthest.get() >= 3.0D, "Did not go out on its round: " + furthest.get() + " " + state(h, helper));
+            h.assertTrue(helper.workGoal().guard().pauses() >= 2, "Did not stop to look about: " + helper.workGoal().guard().pauses());
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    /** A monster beyond the ordinary sixteen blocks, out in the open: the guard sees it on its round and goes for it. */
+    private static void guardWatchesFar(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.WOODEN_SWORD));
+        helper.setRoamRadius(4);
+        var husk = h.spawn(net.minecraft.world.entity.EntityTypes.HUSK, new BlockPos(44, 1, 20));
+        husk.setNoAi(true);
+        helper.setProfession(HelperProfession.GUARD);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.getTarget() == husk || !husk.isAlive(), "Did not go for the monster in view: " + state(h, helper));
+            helper.discard();
+            husk.discard();
+        });
+    }
+
+    /** A monster hitting another helper brings the guard to its aid. */
+    private static void guardDefendsHelper(final GameTestHelper h) {
+        NpcHelperEntity guard = helper(h);
+        equipKit(guard);
+        guard.getBag().addItem(new ItemStack(Items.WOODEN_SWORD));
+        guard.setRoamRadius(4);
+        NpcHelperEntity victim = h.spawn(NpcHelperMod.HELPER.get(), new BlockPos(30, 1, 20));
+        victim.setMode(HelperMode.STAY);
+        var husk = h.spawn(net.minecraft.world.entity.EntityTypes.HUSK, new BlockPos(32, 1, 20));
+        husk.setNoAi(true);
+        guard.setProfession(HelperProfession.GUARD);
+        guard.setNoAi(false);
+        h.runAfterDelay(40, () -> victim.hurtServer(h.getLevel(), h.getLevel().damageSources().mobAttack(husk), 1.0F));
+        h.runAfterDelay(41, () -> h.succeedWhen(() -> {
+            h.assertTrue(guard.getTarget() == husk || !husk.isAlive(), "Did not come to the other helper's aid: " + state(h, guard));
+            guard.discard();
+            victim.discard();
+            husk.discard();
+        }));
     }
 
     private static void keeperPartialStacks(final GameTestHelper h) {

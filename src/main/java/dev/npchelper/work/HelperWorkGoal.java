@@ -43,6 +43,7 @@ public final class HelperWorkGoal extends Goal {
 
     private final NpcHelperEntity helper;
     private final HelperKeeper keeper;
+    private final HelperGuard guard;
     private @Nullable HelperStep activeStep;
     private @Nullable BlockPos site;
     private @Nullable List<BlockPos> trunk;
@@ -64,12 +65,14 @@ public final class HelperWorkGoal extends Goal {
 
     public String problem() { return problem.isEmpty() ? keeper.problem() : problem; }
     public HelperKeeper keeper() { return keeper; }
+    public HelperGuard guard() { return guard; }
     /** Leaves cut out of the way for the current (or last) tree. */
     public int leavesCut() { return leavesCut; }
 
     public HelperWorkGoal(final NpcHelperEntity helper) {
         this.helper = helper;
         this.keeper = new HelperKeeper(helper);
+        this.guard = new HelperGuard(helper);
         setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
@@ -90,6 +93,7 @@ public final class HelperWorkGoal extends Goal {
         helper.getNavigation().stop();
         site = null;
         keeper.reset();
+        guard.reset();
     }
 
     @Override
@@ -117,6 +121,23 @@ public final class HelperWorkGoal extends Goal {
                     if (HelperToolkit.missing(helper, helper.getProfession()) == null) helper.queue().advance();
                     else problem = "Бракує ресурсів для інструментів професії";
                 } else helper.queue().prepend(plan);
+            }
+            case HelperStep.PREPARE_SHIELD -> {
+                helper.queue().advance();
+                helper.queue().prepend(HelperTrades.prepareShield(helper));
+            }
+            case HelperStep.EQUIP_OFFHAND -> {
+                var wanted = HelperCrafting.item(step.item());
+                if (wanted != null) helper.takeInOffhand(wanted);
+                helper.queue().advance();
+            }
+            case HelperStep.GUARD_PATROL -> {
+                ItemStack sword = HelperToolkit.best(helper, HelperToolkit.Tool.SWORD);
+                if (sword.isEmpty()) helper.queue().prepend(List.of(new HelperStep(HelperStep.PREPARE_TOOLS, "", 1)));
+                else {
+                    helper.takeInHand(sword.getItem());
+                    guard.tick(level);
+                }
             }
             case HelperStep.PREPARE_STORE -> {
                 if (keeper.prepare(level)) helper.queue().advance();
@@ -155,6 +176,7 @@ public final class HelperWorkGoal extends Goal {
         helper.getNavigation().stop();
         activeStep = null;
         keeper.reset();
+        guard.reset();
         site = null;
         trunk = null;
         foot = null;
@@ -510,8 +532,8 @@ public final class HelperWorkGoal extends Goal {
     }
 
     /**
-     * Picks a leaf to cut: one over its head that keeps it from climbing, or else the one in reach that lies nearest the
-     * trunk, which is the one between them. With the leaves for this tree used up - or none to cut - the tree is left for
+     * Picks a leaf to cut: one over its head that keeps it from climbing, or else one at body height between it and the
+     * trunk. With the leaves for this tree used up - or none to cut - the tree is left for
      * later and the helper comes down and goes to another. False means it gave the tree up.
      */
     private boolean clearWay(final ServerLevel level, final BlockPos log) {
@@ -522,13 +544,16 @@ public final class HelperWorkGoal extends Goal {
             if (HelperBuildings.naturalLeaves(level.getBlockState(feet.above(up)))) pick = feet.above(up);
         }
         if (pick == null) {
+            // Only leaves at the height of its body bar the way; of those nearer the trunk than it is, the nearest to
+            // itself goes first, so the way is cut one step at a time.
             double best = Double.MAX_VALUE;
             double own = horizontal(feet, log);
-            for (BlockPos pos : BlockPos.betweenClosed(feet.offset(-2, 0, -2), feet.offset(2, 3, 2))) {
+            for (BlockPos pos : BlockPos.betweenClosed(feet.offset(-2, 0, -2), feet.offset(2, 1, 2))) {
                 if (!HelperBuildings.naturalLeaves(level.getBlockState(pos)) || !helper.breaking().inReach(pos)) continue;
-                double toTrunk = horizontal(pos, log);
-                if (toTrunk >= own || toTrunk >= best) continue;
-                best = toTrunk;
+                if (horizontal(pos, log) >= own) continue;
+                double near = horizontal(pos, feet) + horizontal(pos, log) * 0.01D;
+                if (near >= best) continue;
+                best = near;
                 pick = pos.immutable();
             }
         }
@@ -703,6 +728,7 @@ public final class HelperWorkGoal extends Goal {
         }
         var container = HelperContainers.containerAt(level, site);
         if (container != null) {
+            helper.openContainer(level, site);
             var bag = helper.getBag();
             for (int slot = 0; slot < bag.getContainerSize(); slot++) {
                 ItemStack stack = bag.getItem(slot);
@@ -755,6 +781,7 @@ public final class HelperWorkGoal extends Goal {
         }
         var container = HelperContainers.containerAt(level, site);
         if (container == null) { site = null; return; }
+        helper.openContainer(level, site);
         for (int slot = 0; slot < container.getContainerSize() && !step.finished(); slot++) {
             ItemStack stack = container.getItem(slot);
             if (!stack.is(wanted)) continue;

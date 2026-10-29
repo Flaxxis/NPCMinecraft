@@ -53,8 +53,9 @@ public final class HelperPickup {
         for (ItemStack stack : drops) {
             if (stack.isEmpty()) continue;
             ItemEntity item = new ItemEntity(level, pos.getX() + 0.5D, pos.getY() + 0.35D, pos.getZ() + 0.5D, stack.copy());
-            var random = helper.getRandom();
-            item.setDeltaMovement((random.nextDouble() - 0.5D) * 0.08D, 0.12D, (random.nextDouble() - 0.5D) * 0.08D);
+            // Straight down, with no sideways nudge: a log cut from high on a trunk falls down the trunk's own emptied
+            // column instead of coming to rest on the leaves beside it, out of reach until they wither.
+            item.setDeltaMovement(0.0D, 0.12D, 0.0D);
             item.setPickUpDelay(10);
             item.getPersistentData().store(HARVESTER, UUIDUtil.CODEC, helper.getUUID());
             if (level.addFreshEntity(item)) {
