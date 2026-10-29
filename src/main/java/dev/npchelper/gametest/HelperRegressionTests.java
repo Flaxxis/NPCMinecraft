@@ -58,6 +58,7 @@ public final class HelperRegressionTests {
         tests.register("guard_sword_without_iron", () -> HelperRegressionTests::guardSwordWithoutIron);
         tests.register("guard_shield_from_iron", () -> HelperRegressionTests::guardShieldFromIron);
         tests.register("guard_patrols", () -> HelperRegressionTests::guardPatrols);
+        tests.register("guard_night_patrol", () -> HelperRegressionTests::guardNightPatrol);
         tests.register("guard_watches_far", () -> HelperRegressionTests::guardWatchesFar);
         tests.register("guard_defends_helper", () -> HelperRegressionTests::guardDefendsHelper);
         tests.register("keeper_furnace_behind_door", () -> HelperRegressionTests::keeperFurnaceBehindDoor);
@@ -1365,6 +1366,28 @@ public final class HelperRegressionTests {
         h.runAfterDelay(1100, () -> {
             h.assertTrue(furthest.get() >= 3.0D, "Did not go out on its round: " + furthest.get() + " " + state(h, helper));
             h.assertTrue(helper.workGoal().guard().pauses() >= 2, "Did not stop to look about: " + helper.workGoal().guard().pauses());
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    /** At night the guard stays out on its round instead of going home like the others. */
+    private static void guardNightPatrol(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.getBag().addItem(new ItemStack(Items.WOODEN_SWORD));
+        helper.setRoamRadius(8);
+        house(h);
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(30, 1, 20)), HelperSigns.Mark.HOME), "Cannot mark home");
+        helper.setProfession(HelperProfession.GUARD);
+        helper.setNoAi(false);
+        h.runAfterDelay(900, () -> {
+            h.assertTrue(dev.npchelper.entity.HelperNightGoal.night(helper), "Night test environment was not applied");
+            h.assertTrue(!helper.nightGoal().active(), "The guard went home for the night");
+            var current = helper.queue().current();
+            h.assertTrue(current != null && current.type().equals(HelperStep.GUARD_PATROL), "Not on its round at night: " + state(h, helper));
+            h.assertTrue(helper.workGoal().guard().pauses() >= 2, "Did not go round its points at night: " + helper.workGoal().guard().pauses());
             helper.discard();
             h.succeed();
         });
