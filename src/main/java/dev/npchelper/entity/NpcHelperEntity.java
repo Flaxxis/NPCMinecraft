@@ -135,6 +135,7 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
     }
 
     public String workProblem() { return workGoal.problem(); }
+    public int leavesCut() { return workGoal.leavesCut(); }
     public HelperNightGoal nightGoal() { return nightGoal; }
     public boolean isExpedition() { return entityData.get(DATA_EXPEDITION); }
     public void setExpedition(final boolean expedition) {
@@ -191,11 +192,20 @@ public final class NpcHelperEntity extends PathfinderMob implements OwnableEntit
         queue.prepend(java.util.List.of(new dev.npchelper.work.HelperStep(dev.npchelper.work.HelperStep.KEEPER_VISIT, "", 1)));
     }
 
+    /** Where the keeper keeps to at night: its warehouse sign. Null by day, for other trades, or with no warehouse yet. */
+    public @Nullable BlockPos nightPost() {
+        if (getProfession() != HelperProfession.KEEPER || isExpedition() || !HelperNightGoal.night(this)
+                || !(level() instanceof ServerLevel server)) return null;
+        return workGoal.keeper().warehouse(server);
+    }
+
     private void watchForStuck() {
-        Vec3 home = centre();
+        BlockPos post = nightPost();
+        Vec3 home = post != null ? Vec3.atBottomCenterOf(post) : centre();
+        int range = post != null ? dev.npchelper.work.HelperKeeper.NIGHT_RADIUS : workRadius();
         // Idle with nothing to do and already in place is resting, not being trapped.
         boolean wantsToMove = getNavigation().isStuck() || !queue.isEmpty()
-                || home != null && position().distanceTo(home) > workRadius() + 2;
+                || home != null && position().distanceTo(home) > range + 2;
         boolean explained = !wantsToMove || getTarget() != null || nightGoal.active() || breaking.target() != null || home == null;
         if (explained || stillAt == null || position().distanceTo(stillAt) > STILL_MARGIN) {
             stillAt = position();

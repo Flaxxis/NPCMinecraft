@@ -114,7 +114,7 @@ public final class HelperNightGoal extends Goal {
         if (destination != null && !HelperShelter.standable(level, destination)) destination = null;
         if (destination == null) {
             if (now < nextSearch) {
-                wander(level, helper.centre(), false);
+                wander(level, helper.centre(), helper.workRadius(), false);
                 return;
             }
             nextSearch = now + 100;
@@ -125,7 +125,7 @@ public final class HelperNightGoal extends Goal {
             lastProgress = now;
         }
         if (destination == null) {
-            wander(level, helper.centre(), false);
+            wander(level, helper.centre(), helper.workRadius(), false);
             return;
         }
         double distance = destination.distToCenterSqr(helper.position());
@@ -142,7 +142,7 @@ public final class HelperNightGoal extends Goal {
             helper.getNavigation().stop();
         }
         if (settled) {
-            wander(level, Vec3.atBottomCenterOf(destination), inside);
+            wander(level, Vec3.atBottomCenterOf(destination), helper.workRadius(), inside);
             return;
         }
         if (distance + 0.1D < bestDistance) { bestDistance = distance; lastProgress = now; }
@@ -153,12 +153,13 @@ public final class HelperNightGoal extends Goal {
     }
 
     /** Small local walks can fill a large allowed radius without almost always sampling outside a small room. */
-    private void wander(final ServerLevel level, final @Nullable Vec3 centre, final boolean indoors) {
+    public void wander(final ServerLevel level, final @Nullable Vec3 centre, final int radius, final boolean indoors) {
         if (centre == null || !helper.getNavigation().isDone()) return;
         if (wanderCooldown-- > 0) return;
         wanderCooldown = 20 + helper.getRandom().nextInt(70);
-        int radius = helper.workRadius();
-        if (helper.position().distanceToSqr(centre) > (double) radius * radius) {
+        // Out of range, or outside when the place is indoors: go back to it first.
+        if (helper.position().distanceToSqr(centre) > (double) radius * radius
+                || indoors && !HelperShelter.indoors(level, helper.blockPosition())) {
             helper.getNavigation().moveTo(centre.x, centre.y, centre.z, 0, 0.9D);
             return;
         }

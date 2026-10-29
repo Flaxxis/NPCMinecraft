@@ -5,6 +5,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.pathfinder.PathFinder;
 import net.minecraft.world.level.pathfinder.PathType;
 import net.minecraft.world.level.pathfinder.PathfindingContext;
@@ -18,6 +19,22 @@ public final class HelperNavigation extends GroundPathNavigation {
     protected PathFinder createPathFinder(final int maxVisitedNodes) {
         nodeEvaluator = evaluator();
         return new PathFinder(nodeEvaluator, maxVisitedNodes);
+    }
+
+    /**
+     * A path handed over ready-made (the keeper plans its own) leaves the navigation's target where an older walk put it.
+     * Vanilla plans again whenever a block near the path changes — the helper's own door opening is one — and would head
+     * for that old spot: it opened the door, turned round and walked off. Plan again to where this path was going instead.
+     */
+    @Override
+    public void recomputePath() {
+        Path current = getPath();
+        if (current != null && !current.isDone() && !current.getTarget().equals(getTargetPos())) {
+            Path fresh = createPath(current.getTarget(), 1);
+            if (fresh == null || !moveTo(fresh, speedModifier)) stop();
+            return;
+        }
+        super.recomputePath();
     }
 
     private static WalkNodeEvaluator evaluator() {
@@ -35,7 +52,8 @@ public final class HelperNavigation extends GroundPathNavigation {
     }
     public static net.minecraft.world.level.pathfinder.@org.jspecify.annotations.Nullable Path probe(
             final NpcHelperEntity helper, final BlockPos target, final int reach) {
-        int radius = Math.max(32, Math.min(160, (int) Math.ceil(helper.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(target))) + 16));
+        // The path may have to go round a house to its door, so allow a walk well over twice the straight line.
+        int radius = Math.max(64, Math.min(160, 2 * (int) Math.ceil(helper.position().distanceTo(net.minecraft.world.phys.Vec3.atCenterOf(target))) + 32));
         BlockPos from = helper.blockPosition();
         var region = new net.minecraft.world.level.PathNavigationRegion(helper.level(), from.offset(-radius, -radius, -radius), from.offset(radius, radius, radius));
         var finder = new PathFinder(evaluator(), radius * 16);

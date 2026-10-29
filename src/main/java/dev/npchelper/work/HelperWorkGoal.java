@@ -31,6 +31,15 @@ public final class HelperWorkGoal extends Goal {
 
     /** How far a sapling or stick on the ground is worth noticing while working. */
     private static final int GLEAN_RADIUS = 8;
+    /**
+     * Leaves the helper may cut out of its way for one tree. The crown is still never felled - it withers once the trunk
+     * is gone - but a spruce's skirt hangs to head height and would keep the helper from the trunk altogether.
+     */
+    private static final int LEAF_BUDGET = 5;
+    /** Standing this long without getting anywhere means the leaves are in the way. */
+    private static final int BLOCKED_TICKS = 20 * 3;
+    /** A tree it could not get into is left alone for a while; its leaves may have withered by then. */
+    private static final int SKIP_TREE_TICKS = 20 * 60 * 5;
 
     private final NpcHelperEntity helper;
     private final HelperKeeper keeper;
@@ -39,6 +48,12 @@ public final class HelperWorkGoal extends Goal {
     private @Nullable List<BlockPos> trunk;
     private @Nullable BlockPos foot;
     private Phase phase = Phase.FELL;
+    private int leavesCut;
+    private boolean columnTried;
+    private @Nullable BlockPos clearing;
+    private @Nullable Vec3 stillAt;
+    private int stillTicks;
+    private final java.util.Map<BlockPos, Long> skippedTrees = new java.util.HashMap<>();
     private @Nullable BlockPos soilExit;
     private final java.util.Set<BlockPos> soilProtected = new java.util.HashSet<>();
     private String problem = "";
@@ -49,6 +64,8 @@ public final class HelperWorkGoal extends Goal {
 
     public String problem() { return problem.isEmpty() ? keeper.problem() : problem; }
     public HelperKeeper keeper() { return keeper; }
+    /** Leaves cut out of the way for the current (or last) tree. */
+    public int leavesCut() { return leavesCut; }
 
     public HelperWorkGoal(final NpcHelperEntity helper) {
         this.helper = helper;
@@ -142,6 +159,8 @@ public final class HelperWorkGoal extends Goal {
         trunk = null;
         foot = null;
         phase = Phase.FELL;
+        clearing = null;
+        stillAt = null;
         soilExit = null;
         soilProtected.clear();
         problem = "";
@@ -399,6 +418,10 @@ public final class HelperWorkGoal extends Goal {
             trunk = HelperTree.trunk(level, first);
             foot = HelperTree.foot(trunk);
             phase = Phase.FELL;
+            leavesCut = 0;
+            columnTried = false;
+            clearing = null;
+            stillAt = null;
         }
 
         switch (phase) {
@@ -427,26 +450,102 @@ public final class HelperWorkGoal extends Goal {
             phase = Phase.RECOVER;
             return;
         }
+        // A leaf already being cut out of the way is finished first.
+        if (clearing != null) {
+            if (!HelperBuildings.naturalLeaves(level.getBlockState(clearing)) || !helper.breaking().inReach(clearing)) {
+                clearing = null;
+            } else {
+                helper.getNavigation().stop();
+                if (helper.breaking().tick(clearing)) {
+                    clearing = null;
+                    leavesCut++;
+                    stillAt = null;
+                    helper.queue().noteProgress();
+                }
+                return;
+            }
+        }
         // Too high to reach: a step of its own dirt goes down first.
         if (HelperSupports.outOfReach(helper, log) && !helper.breaking().inReach(log)) {
             double dx = helper.getX() - (log.getX() + 0.5D), dz = helper.getZ() - (log.getZ() + 0.5D);
+            // Best of all from inside the trunk's own column, where the logs already cut leave room overhead; if it will
+            // not step in there, from beside the trunk as before.
+            BlockPos column = new BlockPos(log.getX(), helper.blockPosition().getY(), log.getZ());
+            boolean inColumn = helper.blockPosition().equals(column);
+            if (!inColumn && !columnTried && helper.onGround() && dev.npchelper.entity.HelperShelter.standable(level, column)) {
+                if (blocked()) columnTried = true;
+                else approach(column);
+                return;
+            }
             if (dx * dx + dz * dz > 6.25D) {
-                approach(new BlockPos(log.getX(), helper.blockPosition().getY(), log.getZ()));
+                if (blocked()) clearWay(level, log);
+                else approach(column);
                 return;
             }
             if (!helper.getNavigation().isDone() && !helper.getNavigation().isStuck()) return;
             if (helper.supports().step(level, log)) helper.queue().noteProgress();
-            else phase = Phase.RECOVER;
+            else if (!clearWay(level, log)) phase = Phase.RECOVER;
             return;
         }
         if (!helper.breaking().inReach(log)) {
-            approach(log);
+            if (blocked()) clearWay(level, log);
+            else approach(log);
             return;
         }
+        stillAt = null;
         helper.getNavigation().stop();
         if (!helper.breaking().tick(log)) return;
 
         helper.queue().noteProgress();
+    }
+
+    /** True once the helper has stood in one place, getting nowhere, for a few seconds. */
+    private boolean blocked() {
+        if (stillAt == null || helper.position().distanceToSqr(stillAt) > 0.25D) {
+            stillAt = helper.position();
+            stillTicks = 0;
+            return false;
+        }
+        return ++stillTicks > BLOCKED_TICKS;
+    }
+
+    /**
+     * Picks a leaf to cut: one over its head that keeps it from climbing, or else the one in reach that lies nearest the
+     * trunk, which is the one between them. With the leaves for this tree used up - or none to cut - the tree is left for
+     * later and the helper comes down and goes to another. False means it gave the tree up.
+     */
+    private boolean clearWay(final ServerLevel level, final BlockPos log) {
+        stillAt = null;
+        BlockPos feet = helper.blockPosition();
+        BlockPos pick = null;
+        for (int up = 1; up <= 2 && pick == null; up++) {
+            if (HelperBuildings.naturalLeaves(level.getBlockState(feet.above(up)))) pick = feet.above(up);
+        }
+        if (pick == null) {
+            double best = Double.MAX_VALUE;
+            double own = horizontal(feet, log);
+            for (BlockPos pos : BlockPos.betweenClosed(feet.offset(-2, 0, -2), feet.offset(2, 3, 2))) {
+                if (!HelperBuildings.naturalLeaves(level.getBlockState(pos)) || !helper.breaking().inReach(pos)) continue;
+                double toTrunk = horizontal(pos, log);
+                if (toTrunk >= own || toTrunk >= best) continue;
+                best = toTrunk;
+                pick = pos.immutable();
+            }
+        }
+        if (pick == null || leavesCut >= LEAF_BUDGET) {
+            if (trunk != null) for (BlockPos pos : trunk) skippedTrees.put(pos.immutable(), level.getGameTime() + SKIP_TREE_TICKS);
+            problem = "Не можу пробратися до стовбура крізь листя — піду до іншого дерева";
+            phase = Phase.RECOVER;
+            return false;
+        }
+        clearing = pick;
+        helper.getNavigation().stop();
+        return true;
+    }
+
+    private static double horizontal(final BlockPos a, final BlockPos b) {
+        double dx = a.getX() - b.getX(), dz = a.getZ() - b.getZ();
+        return dx * dx + dz * dz;
     }
 
     /** What a dying crown sheds, and nothing else: the helper is not scavenging the forest floor. */
@@ -794,6 +893,9 @@ public final class HelperWorkGoal extends Goal {
         Vec3 centre = helper.workCentre();
         if (centre == null) return null;
         var logs = HelperTreeSearch.find(level, BlockPos.containing(centre), helper.workRadius());
-        return logs.isEmpty() ? null : logs.getFirst();
+        long now = level.getGameTime();
+        skippedTrees.values().removeIf(until -> until <= now);
+        for (BlockPos log : logs) if (!skippedTrees.containsKey(log)) return log;
+        return null;
     }
 }

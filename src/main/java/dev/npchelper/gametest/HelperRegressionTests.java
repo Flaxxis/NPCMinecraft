@@ -44,6 +44,7 @@ public final class HelperRegressionTests {
         tests.register("soil_under_grass", () -> HelperRegressionTests::soilUnderGrass);
         tests.register("tall_tree_steps", () -> HelperRegressionTests::tallTreeSteps);
         tests.register("second_tall_tree", () -> HelperRegressionTests::secondTallTree);
+        tests.register("spruce_low_leaves", () -> HelperRegressionTests::spruceLowLeaves);
         tests.register("keeper_sweeps_ground", () -> HelperRegressionTests::keeperSweepsGround);
         tests.register("warehouse_any_free_slot", () -> HelperRegressionTests::warehouseAnyFreeSlot);
         tests.register("keeper_unloads_amid_litter", () -> HelperRegressionTests::keeperUnloadsAmidLitter);
@@ -52,6 +53,8 @@ public final class HelperRegressionTests {
         tests.register("keeper_splits_across_furnaces", () -> HelperRegressionTests::keeperSplitsAcrossFurnaces);
         tests.register("keeper_without_furnace", () -> HelperRegressionTests::keeperWithoutFurnace);
         tests.register("keeper_night_duty", () -> HelperRegressionTests::keeperNightDuty);
+        tests.register("keeper_night_indoors", () -> HelperRegressionTests::keeperNightIndoors);
+        tests.register("keeper_furnace_behind_door", () -> HelperRegressionTests::keeperFurnaceBehindDoor);
         tests.register("actions_menu_sync", () -> HelperRegressionTests::actionsMenuSync);
         tests.register("profession_cancels_running_work", () -> HelperRegressionTests::professionCancelsRunningWork);
         tests.register("pickup_full_bag", () -> HelperRegressionTests::pickupFullBag);
@@ -402,6 +405,36 @@ public final class HelperRegressionTests {
             h.assertTrue(!helper.supports().any(), "Own pillar was not taken down");
             h.assertTrue(helper.getBag().countItem(Items.OAK_LOG) == 16, "Both trunks were not physically collected");
             h.assertTrue(helper.getBag().countItem(Items.DIRT) == HelperSupports.CARRY, "Own soil was lost between the climbs");
+            helper.discard();
+        });
+    }
+
+    /**
+     * A spruce whose skirt of leaves hangs down to head height all round the trunk: the helper must clear a few leaves to
+     * get in to the trunk, and no more than that (game 29.10: it dithered under the low leaves of a spruce).
+     */
+    private static void spruceLowLeaves(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        helper.getBag().addItem(new ItemStack(Items.IRON_AXE));
+        helper.getBag().addItem(new ItemStack(Items.DIRT, HelperSupports.CARRY));
+        var leaves = Blocks.SPRUCE_LEAVES.defaultBlockState().setValue(net.minecraft.world.level.block.LeavesBlock.DISTANCE, 1);
+        int placed = 0;
+        for (int y = 2; y <= 10; y++) {
+            int radius = y == 10 ? 0 : y % 2 == 0 ? 2 : 1;
+            for (int dx = -radius; dx <= radius; dx++) for (int dz = -radius; dz <= radius; dz++) {
+                if (y < 10 && dx == 0 && dz == 0) continue;
+                h.setBlock(new BlockPos(23 + dx, y, 20 + dz), leaves);
+                placed++;
+            }
+        }
+        for (int y = 1; y <= 9; y++) h.setBlock(new BlockPos(23, y, 20), Blocks.SPRUCE_LOG);
+        int total = placed;
+        helper.queue().set(List.of(new HelperStep(HelperStep.GATHER_WOOD, "", 64)));
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            h.assertTrue(helper.getBag().countItem(Items.SPRUCE_LOG) == 9, "Did not get the whole spruce in under its leaves: " + state(h, helper));
+            h.assertTrue(helper.leavesCut() >= 1 && helper.leavesCut() <= 5, "Leaves cut for one tree: " + helper.leavesCut() + " of " + total);
+            h.assertTrue(!helper.supports().any(), "Own pillar was not taken down");
             helper.discard();
         });
     }
@@ -1179,6 +1212,77 @@ public final class HelperRegressionTests {
             h.assertTrue(litter.isAlive(), "Went out gathering in the dark");
             helper.discard();
             h.succeed();
+        });
+    }
+
+    /**
+     * The warehouse is in a house: at night the keeper stays inside it and leaves the chest out in the street alone
+     * (game 29.10: it went out at night).
+     */
+    private static void keeperNightIndoors(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        house(h);
+        BlockPos inside = h.absolutePos(new BlockPos(29, 1, 20));
+        helper.teleportTo(inside.getX() + 0.5D, inside.getY(), inside.getZ() + 0.5D);
+        helper.setMode(HelperMode.STAY);
+        helper.setRoamRadius(32);
+        BlockPos store = chest(h, 30, 22);
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(30, 1, 18)), HelperSigns.Mark.STORE), "Cannot mark warehouse");
+        BlockPos street = chest(h, 8, 20);
+        var outside = HelperContainers.containerAt(h.getLevel(), street);
+        outside.setItem(0, new ItemStack(Items.COAL, 10));
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        var room = net.minecraft.world.level.levelgen.structure.BoundingBox.fromCorners(h.absolutePos(new BlockPos(27, 1, 18)), h.absolutePos(new BlockPos(31, 3, 22)));
+        h.onEachTick(() -> {
+            h.assertTrue(room.isInside(helper.blockPosition()), "The keeper went outside at night: " + state(h, helper));
+        });
+        h.runAfterDelay(900, () -> {
+            h.assertTrue(dev.npchelper.entity.HelperNightGoal.night(helper), "Night test environment was not applied");
+            h.assertTrue(outside.countItem(Items.COAL) == 10 && stored(h, List.of(store), Items.COAL) == 0, "Hauled from a chest out in the dark");
+            helper.discard();
+            h.succeed();
+        });
+    }
+
+    /**
+     * The furnace is in a house whose door is on the far side, so the keeper must walk round it and in — and on the way
+     * round it gets further from the furnace before it gets closer (game 29.10: it reached the door, opened and shut it,
+     * backed off and stood about, and loaded the furnace only once it happened to be inside already).
+     */
+    private static void keeperFurnaceBehindDoor(final GameTestHelper h) {
+        NpcHelperEntity helper = helper(h);
+        equipKit(helper);
+        helper.setRoamRadius(16);
+        for (int x = 26; x <= 32; x++) for (int z = 17; z <= 23; z++) {
+            h.setBlock(new BlockPos(x, 4, z), Blocks.STONE);
+            if (x == 26 || x == 32 || z == 17 || z == 23) {
+                for (int y = 1; y <= 3; y++) h.setBlock(new BlockPos(x, y, z), Blocks.STONE);
+            }
+        }
+        // The door is on the side away from the keeper.
+        var door = Blocks.OAK_DOOR.defaultBlockState().setValue(net.minecraft.world.level.block.DoorBlock.FACING, net.minecraft.core.Direction.EAST);
+        h.setBlock(new BlockPos(32, 1, 20), door);
+        h.setBlock(new BlockPos(32, 2, 20), door.setValue(net.minecraft.world.level.block.DoorBlock.HALF,
+                net.minecraft.world.level.block.state.properties.DoubleBlockHalf.UPPER));
+
+        BlockPos store = chest(h, 22, 18);
+        helper.getBag().addItem(new ItemStack(Items.OAK_SIGN));
+        h.assertTrue(HelperSigns.place(h.getLevel(), helper.getBag(), h.absolutePos(new BlockPos(21, 1, 18)), HelperSigns.Mark.STORE), "Cannot mark warehouse");
+        var chest = HelperContainers.containerAt(h.getLevel(), store);
+        chest.setItem(0, new ItemStack(Items.RAW_IRON, 16));
+        chest.setItem(1, new ItemStack(Items.COAL, 4));
+
+        var blast = furnace(h, new BlockPos(28, 1, 20), Blocks.BLAST_FURNACE);
+        helper.setProfession(HelperProfession.KEEPER);
+        helper.setNoAi(false);
+        h.succeedWhen(() -> {
+            int inFurnace = blast.countItem(Items.RAW_IRON) + blast.countItem(Items.IRON_INGOT);
+            h.assertTrue(inFurnace == 16 && chest.countItem(Items.COAL) == 2,
+                    "Did not get round to the furnace behind the door: furnace " + inFurnace + ", " + state(h, helper) + ",problem=" + helper.workProblem());
+            helper.discard();
         });
     }
 
